@@ -27,11 +27,22 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: main
+      # By name into fixed paths: a lone artifact would otherwise be extracted
+      # without its name directory. score is absent when the gate refused.
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        continue-on-error: true
         with:
+          name: gate
           run-id: ${{ github.event.workflow_run.id }}
           github-token: ${{ github.token }}
-          path: artifacts
+          path: artifacts/gate
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        continue-on-error: true
+        with:
+          name: score
+          run-id: ${{ github.event.workflow_run.id }}
+          github-token: ${{ github.token }}
+          path: artifacts/score
       - run: rustup toolchain install
       - run: cargo build --locked --release
       - name: Record the PR attempt and render the comment
