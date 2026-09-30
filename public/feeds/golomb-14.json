@@ -29,25 +29,32 @@
   ],
   "challenge": "golomb-14",
   "feed_schema_version": 1,
-  "fetched_at": "2026-09-30T16:42:43Z",
-  "generated_at": "2026-09-30T16:42:43Z",
+  "fetched_at": "2026-09-30T00:00:00Z",
+  "generated_at": "2026-09-30T00:00:00Z",
   "policy": {
-    "editable": [
-      "candidate/"
+    "allowed_paths": [
+      "challenges/golomb-14/candidate/**"
     ],
-    "forbidden": [
-      "everything outside editable",
-      "symlinks",
-      "gitlinks",
-      "> 4096 bytes"
+    "forbidden_paths": [
+      "challenges/golomb-14/SUBMITTING.md",
+      "challenges/golomb-14/THREAT_MODEL.md",
+      "challenges/golomb-14/baseline/**",
+      "challenges/golomb-14/bench/**",
+      "challenges/golomb-14/challenge.toml",
+      "challenges/golomb-14/preflight/**",
+      "challenges/golomb-14/setup.sh",
+      "challenges/golomb-14/verifier/**",
+      ".github/**"
     ],
-    "measurement": {
+    "measurement_policy": {
+      "host_policy": null,
+      "max_submission_bytes": 4096,
       "perf": null,
       "runner": "ubuntu-24.04",
       "rust_allow": null,
       "salted_inputs": false
     },
-    "runner_fingerprint": "github-actions Linux 20260927.320.1; linux x86_64; AMD EPYC 9V74 80-Core Processor; 2 cpus"
+    "selection_basis": "PR gate: only editable paths change; no symlinks or gitlinks; size cap"
   },
   "record": {
     "at": "2026-09-30T15:46:42Z",

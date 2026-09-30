@@ -272,7 +272,8 @@ pub fn score(root: &Path, slug: &str, source: Source, sandbox: bool) -> Result<V
             ]
         })
         .unwrap_or_default();
-    let mut out = json!({"schema": RESULTS_SCHEMA, "slug": slug, "host": host(), "sandboxed": sandbox, "expr": spec.objective.expr});
+    let mut out = json!({"schema": RESULTS_SCHEMA, "slug": slug, "host": host(), "host_policy": preflight::host_policy(),
+                         "sandboxed": sandbox, "expr": spec.objective.expr});
     let setup = run_in(false, &env, &ws, &spec.commands.setup, 0);
     if !setup.ok {
         out["status"] = "infra_failed".into();
@@ -459,7 +460,7 @@ pub fn record(root: &Path, slug: &str, runs: &[Value], a: &Attempt) -> Result<Va
         "slug": slug, "commit": a.commit, "by": a.by, "model": a.model,
         "expr": spec.objective.expr, "value": if values.iter().all(Option::is_some) { json!(mean) } else { Value::Null },
         "record_before": record_value,
-        "runs": runs.iter().map(|r| json!({"seed": r["seed"], "host": r["host"], "value": r["value"], "status": r["status"],
+        "runs": runs.iter().map(|r| json!({"seed": r["seed"], "host": r["host"], "host_policy": r["host_policy"], "value": r["value"], "status": r["status"],
                                            "metrics": r["metrics"], "sandboxed": r["sandboxed"]})).collect::<Vec<_>>(),
     });
     let path = results_path(root, slug);

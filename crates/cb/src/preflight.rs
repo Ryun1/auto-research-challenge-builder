@@ -106,6 +106,36 @@ pub fn host() -> String {
     )
 }
 
+/// The host as the toolkit's `check()` reads it (host_policy keys).
+pub fn host_policy() -> Value {
+    let cpu = if cfg!(target_os = "macos") {
+        cmd_out("sysctl", &["-n", "machdep.cpu.brand_string"])
+    } else {
+        std::fs::read_to_string("/proc/cpuinfo").ok().and_then(|s| {
+            s.lines()
+                .find(|l| l.starts_with("model name"))
+                .map(|l| l.split(':').nth(1).unwrap_or("").trim().to_string())
+        })
+    };
+    let memory_bytes = if cfg!(target_os = "macos") {
+        cmd_out("sysctl", &["-n", "hw.memsize"]).and_then(|s| s.parse::<u64>().ok())
+    } else {
+        std::fs::read_to_string("/proc/meminfo").ok().and_then(|s| {
+            s.lines()
+                .find(|l| l.starts_with("MemTotal:"))
+                .and_then(|l| l.split_whitespace().nth(1)?.parse::<u64>().ok())
+                .map(|kb| kb * 1024)
+        })
+    };
+    json!({
+        "cpu_model": cpu,
+        "logical_cpu_count": std::thread::available_parallelism().map(|n| n.get()).ok(),
+        "memory_bytes": memory_bytes,
+        "os": std::env::consts::OS,
+        "arch": std::env::consts::ARCH,
+    })
+}
+
 pub(crate) fn cmd_out(cmd: &str, args: &[&str]) -> Option<String> {
     let out = Command::new(cmd).args(args).output().ok()?;
     out.status

@@ -68,9 +68,65 @@ pub fn feed(root: &Path, slug: &str, url: &str, generated_at: &str) -> Result<Va
             .entry(format!("{}:{}", str_of(&r["stage"]), str_of(&r["status"])))
             .or_default() += 1;
     }
-    let fingerprint = current_record(&results)
+    let host_policy = current_record(&results)
         .and_then(|r| r["runs"].get(0))
-        .map(|run| run["host"].clone());
+        .map(|run| run["host_policy"].clone())
+        .filter(|h| !h.is_null());
+    // Repo-relative globs, in the shape the toolkit's `check()` compares
+    // against a domain's [policy]: the editable surface, and every judge
+    // path beside it.
+    let prefix = format!(
+        "{}/{slug}",
+        root.file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or("challenges")
+    );
+    let editable: Vec<String> = spec
+        .paths
+        .editable
+        .iter()
+        .map(|e| e.trim_end_matches('/').to_string())
+        .collect();
+    let allowed: Vec<String> = editable
+        .iter()
+        .map(|e| format!("{prefix}/{e}/**"))
+        .collect();
+    let mut forbidden = Vec::new();
+    let mut judge = |dir: &str| {
+        for e in std::fs::read_dir(root.join(slug).join(dir))
+            .into_iter()
+            .flatten()
+            .flatten()
+        {
+            let name = e.file_name().to_string_lossy().into_owned();
+            let rel = if dir.is_empty() {
+                name.clone()
+            } else {
+                format!("{dir}/{name}")
+            };
+            if editable.contains(&rel) || name == "target" || name == "results.jsonl" {
+                continue;
+            }
+            // A directory holding an editable path is judge except that path.
+            if editable.iter().any(|ed| ed.starts_with(&format!("{rel}/"))) {
+                continue;
+            }
+            let is_dir = e.file_type().map(|t| t.is_dir()).unwrap_or(false);
+            forbidden.push(if is_dir {
+                format!("{prefix}/{rel}/**")
+            } else {
+                format!("{prefix}/{rel}")
+            });
+        }
+    };
+    judge("");
+    for ed in &editable {
+        if let Some((parent, _)) = ed.rsplit_once('/') {
+            judge(parent);
+        }
+    }
+    forbidden.sort();
+    forbidden.push(".github/**".into());
     let bips = spec.objective.min_improvement_bips;
     let statistic = match (spec.challenge.kit.as_deref(), spec.challenge.family.as_str()) {
         (Some("rust"), _) => "callgrind instruction ratio vs frozen reference; paired wall-time guard (mirrored blocks, rel-MAD)",
@@ -97,11 +153,17 @@ pub fn feed(root: &Path, slug: &str, url: &str, generated_at: &str) -> Result<Va
             "baseline": baseline,
         },
         "policy": {
-            "editable": spec.paths.editable,
-            "forbidden": ["everything outside editable", "symlinks", "gitlinks", format!("> {} bytes", spec.paths.max_bytes)],
-            "measurement": {"runner": spec.challenge.runner, "perf": spec.perf.as_ref().map(|p| json!({"blocks": p.blocks, "max_dispersion": p.max_dispersion})),
-                            "salted_inputs": spec.inputs.salted, "rust_allow": spec.rust.as_ref().map(|r| r.allow.clone())},
-            "runner_fingerprint": fingerprint,
+            "allowed_paths": allowed,
+            "forbidden_paths": forbidden,
+            "selection_basis": "PR gate: only editable paths change; no symlinks or gitlinks; size cap",
+            "measurement_policy": {
+                "runner": spec.challenge.runner,
+                "max_submission_bytes": spec.paths.max_bytes,
+                "perf": spec.perf.as_ref().map(|p| json!({"blocks": p.blocks, "max_dispersion": p.max_dispersion})),
+                "salted_inputs": spec.inputs.salted,
+                "rust_allow": spec.rust.as_ref().map(|r| r.allow.clone()),
+                "host_policy": host_policy,
+            },
         },
         "attempts_count": by_status.values().sum::<u64>(),
         "attempts_by_status": by_status,
@@ -248,6 +310,25 @@ mod tests {
         assert_eq!(f["bar"]["baseline"], 50.0);
         assert_eq!(f["attempts_count"], 2);
         assert_eq!(f["attempts_by_status"]["pr:rejected"], 1);
+        let forbidden: Vec<&str> = f["policy"]["forbidden_paths"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|v| v.as_str().unwrap())
+            .collect();
+        assert!(
+            forbidden.contains(&"challenges/toy/verifier/**")
+                && forbidden.contains(&"challenges/toy/challenge.toml"),
+            "{forbidden:?}"
+        );
+        assert!(
+            !forbidden.iter().any(|p| p.contains("candidate")),
+            "{forbidden:?}"
+        );
+        assert_eq!(
+            f["policy"]["allowed_paths"][0],
+            "challenges/toy/candidate/**"
+        );
         // Every Snapshot field the toolkit knows is present.
         for k in [
             "source",
