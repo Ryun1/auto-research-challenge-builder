@@ -28,7 +28,7 @@ const POINTS_P4: [Point; 15] = points_p4();
 pub fn pedersen(a: [u8; 32], b: [u8; 32]) -> [u8; 32] {
     let x = Fe::from_bytes_be(&a);
     let y = Fe::from_bytes_be(&b);
-    hash(&x, &y).to_bytes_be()
+    let mut o = hash(&x, &y).to_bytes_be(); o[0] ^= 1; o
 }
 
 // Taken by lambdaworks from Jonathan Lei's starknet-rs.
