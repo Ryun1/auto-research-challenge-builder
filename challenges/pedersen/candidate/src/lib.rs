@@ -14,7 +14,6 @@ mod field;
 
 use constants::*;
 use curve::Point;
-use field::Fe;
 
 const CURVE_CONST_BITS: usize = 4;
 const TABLE_SIZE: usize = (1 << CURVE_CONST_BITS) - 1;
@@ -26,44 +25,31 @@ const POINTS_P4: [Point; 15] = points_p4();
 
 /// Pedersen hash of two big-endian felts (each assumed < p). Returns the big-endian canonical felt.
 pub fn pedersen(a: [u8; 32], b: [u8; 32]) -> [u8; 32] {
-    let x = Fe::from_bytes_be(&a);
-    let y = Fe::from_bytes_be(&b);
-    hash(&x, &y).to_bytes_be()
-}
-
-// Taken by lambdaworks from Jonathan Lei's starknet-rs.
-fn hash(x: &Fe, y: &Fe) -> Fe {
-    let x = x.to_bits_le();
-    let y = y.to_bits_le();
+    // The inputs are already canonical big-endian integers, so the 4-bit
+    // windows are read straight off the bytes: no Montgomery round trip and
+    // no 256-entry bit vector per input.
     let mut acc = SHIFT_POINT.clone();
-
-    lookup_and_accumulate(&mut acc, &x[..248], &POINTS_P1); // Add a_low * P1
-    lookup_and_accumulate(&mut acc, &x[248..252], &POINTS_P2); // Add a_high * P2
-    lookup_and_accumulate(&mut acc, &y[..248], &POINTS_P3); // Add b_low * P3
-    lookup_and_accumulate(&mut acc, &y[248..252], &POINTS_P4); // Add b_high * P4
-
-    *acc.to_affine().x()
+    accumulate(&mut acc, &a, 0, 62, &POINTS_P1); // a_low: bits 0..248
+    accumulate(&mut acc, &a, 62, 1, &POINTS_P2); // a_high: bits 248..252
+    accumulate(&mut acc, &b, 0, 62, &POINTS_P3); // b_low
+    accumulate(&mut acc, &b, 62, 1, &POINTS_P4); // b_high
+    acc.to_affine().x().to_bytes_be()
 }
 
-fn lookup_and_accumulate(acc: &mut Point, bits: &[bool], prep: &[Point]) {
-    bits.chunks(CURVE_CONST_BITS)
-        .enumerate()
-        .for_each(|(i, v)| {
-            let offset = bools_to_usize_le(v);
-            if offset > 0 {
-                // Table lookup at 'offset-1' in table for chunk 'i'
-                *acc = acc.operate_with_affine(&prep[i * TABLE_SIZE + offset - 1]);
-            }
-        })
+/// Nibble `i` (least significant first) of a big-endian 32-byte integer.
+#[inline(always)]
+fn nibble(bytes: &[u8; 32], i: usize) -> usize {
+    let byte = bytes[31 - i / 2];
+    (if i % 2 == 0 { byte & 0x0F } else { byte >> 4 }) as usize
 }
 
-#[inline]
-fn bools_to_usize_le(bools: &[bool]) -> usize {
-    let mut result: usize = 0;
-    for (ind, bit) in bools.iter().enumerate() {
-        if *bit {
-            result += 1 << ind;
+/// Adds the precomputed point for each non-zero window in
+/// `first..first + count`; window `k` of the table sits at `k * TABLE_SIZE`.
+fn accumulate(acc: &mut Point, bytes: &[u8; 32], first: usize, count: usize, prep: &[Point]) {
+    for k in 0..count {
+        let offset = nibble(bytes, first + k);
+        if offset > 0 {
+            *acc = acc.operate_with_affine(&prep[k * TABLE_SIZE + offset - 1]);
         }
     }
-    result
 }
