@@ -1,0 +1,23 @@
+[challenge]
+slug      = "golomb-14"
+family    = "math"
+direction = "minimise"
+status    = "draft"          # draft | open | closed
+runner    = "ubuntu-24.04"   # pinned image
+
+[paths]
+editable  = ["candidate/"]   # candidate/ruler.txt: data only
+max_bytes = 4096
+
+[commands]
+setup  = "./setup.sh"
+# no build: the verifier checks data and never runs participant code
+verify = "./verifier/run"  # exit 0 + JSON {ok, detail}
+score  = "./bench/run"     # JSON {metrics: {...}}
+
+[objective]
+expr                 = "length"
+min_improvement_bips = 0  # any shorter valid ruler is a record (as Heesch)
+
+[inputs]
+salted = false  # deterministic data check, no inputs

@@ -29,3 +29,7 @@ jobs:
         env:
           CB_REQUIRE_VALGRIND: '1'
       - run: cargo test --locked --release --manifest-path kits/rust/Cargo.toml
+      - name: cb preflight every challenge
+        run: |
+          cargo build --locked --release
+          for d in challenges/*/; do ./target/release/cb preflight "$(basename "$d")"; done
