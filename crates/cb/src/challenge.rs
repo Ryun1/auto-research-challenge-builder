@@ -5,7 +5,6 @@
 //! `paths.editable` = editablePaths, `paths.max_bytes` = maxSubmissionBytes,
 //! `objective.min_improvement_bips` = minScoreImprovementBips,
 //! `commands.setup` = setupCommand, `challenge.direction` = direction (+/-).
-#![allow(dead_code)] // commands/objective/inputs are read by `cb preflight` (#8)
 
 use crate::paths;
 use serde::Deserialize;
@@ -237,7 +236,7 @@ salted = true  # seed drawn by the harness after the build, recorded after
     )
 }
 
-const THREAT_MODEL: &str = r#"# Threat model
+pub const THREAT_MODEL: &str = r#"# Threat model
 
 Required before launch; reviewed in the PR that opens the challenge.
 Answer every question. "N/A" needs a reason.
@@ -260,7 +259,9 @@ Answer every question. "N/A" needs a reason.
 
 ## What does a large outlier (+100%) trigger?
 
-Manual review; never auto-promote. Who reviews:
+Manual review; never auto-promote.
+
+- Who reviews:
 "#;
 
 fn submitting(slug: &str) -> String {
@@ -331,6 +332,22 @@ pub fn scaffold(
         "The editable surface. Starts as a copy of the baseline.\n",
         false,
     )?;
+    for (name, what) in [
+        (
+            "off-by-one",
+            "an answer that is wrong by one (last element, last bit, boundary)",
+        ),
+        ("partial", "an answer that does only part of the work"),
+        (
+            "constant",
+            "a constant or cached answer that ignores the input",
+        ),
+    ] {
+        let body = format!(
+            "Replace with a candidate that gives {what}.\nIt must build and then FAIL the verifier (cb preflight checks).\n"
+        );
+        write(&format!("preflight/broken/{name}/README.md"), &body, false)?;
+    }
     Ok(dir)
 }
 
@@ -362,6 +379,7 @@ mod tests {
                 "bench/run",
                 "baseline",
                 "candidate",
+                "preflight/broken/constant",
             ] {
                 assert!(dir.join(rel).exists(), "{f}: {rel}");
             }

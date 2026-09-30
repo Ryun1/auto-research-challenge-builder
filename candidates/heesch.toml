@@ -1,0 +1,75 @@
+# Calibration set (#6). Documented from the repo, 2026-09-30 (record profile needs a 128 GB box; not run here).
+[candidate]
+slug = "heesch"
+title = "Heesch numbers of unmarked polyforms"
+family = "math"
+direction = "maximise"
+category = "math"
+url = "https://github.com/Ryun1/heesch"
+editable = ["submission"]
+min_improvement_bips = 0
+max_bytes = 536870912
+
+[gates.verifiable]
+pass = true
+evidence = "witness patch + machine-checked UNSAT proof; scoring never executes participant code (benchmark.json)"
+
+[gates.scalar_objective]
+pass = true
+evidence = "verified corona count + fractional progress (benchmark.json)"
+
+[gates.bounded]
+pass = true
+evidence = "240 min on blacksmith-32vcpu-ubuntu-2404 (.github/workflows/benchmark.yml)"
+
+[gates.baseline]
+pass = true
+evidence = "class record Hc = 4 reproduces (README, Kaplan 2022)"
+
+[scores.expert_scarcity]
+value = 5
+evidence = "tiling theory + SAT certificates: Kaplan and a few others"
+
+[scores.headroom]
+value = 3
+evidence = "Hc = 5 would be a research result; whether one exists at <=200 cells is open"
+
+[scores.eval_cost]
+value = 2
+evidence = "240 min record profile (benchmark.yml)"
+
+[scores.noise]
+value = 5
+evidence = "deterministic proof check"
+
+[scores.gaming_resistance]
+value = 5
+evidence = "submission is data checked by a certificate; never runs participant code"
+
+[scores.fidelity]
+value = 5
+evidence = "the benchmark is the math question"
+
+[scores.value]
+value = 2
+evidence = "math research value; no Starknet deployment"
+
+[scores.decomposability]
+value = 3
+evidence = "defect credit gives partial progress, but a record is one leap"
+
+[scores.prior_art]
+value = 4
+evidence = "Kaplan 2022 paper and census code"
+
+[laptop]
+evidence = "README: producing the proof takes minutes on a laptop; record-scale LRAT is 8 GiB decompressed, record verification needs the benchmark runner (README:109, :185)"
+apple = { produce = "yes", verify = "yes-slow", score = "no" }
+x86 = { produce = "yes", verify = "yes-slow", score = "no" }
+
+[peaks]
+minutes = 240.0
+ram_gb = 128.0
+disk_gb = 60.0
+gpu = false
+evidence = "documented runner: blacksmith 32 vCPU / 128 GB, timeout 240 min, 60 GB scratch (benchmark.yml, PLAN.md)"

@@ -5,6 +5,8 @@ use std::process::ExitCode;
 mod candidate;
 mod challenge;
 mod paths;
+mod policy;
+mod preflight;
 mod rubric;
 mod site;
 
@@ -41,11 +43,14 @@ enum Command {
         #[arg(long, default_value = "challenges")]
         root: PathBuf,
     },
-    /// Run launch checks for a challenge
+    /// Run launch checks for a challenge on this machine (laptop or runner)
     Preflight {
         slug: String,
-        #[arg(long)]
-        local: bool,
+        #[arg(long, default_value = "challenges")]
+        root: PathBuf,
+        /// Where to write <slug>.json
+        #[arg(long, default_value = "target/preflight")]
+        out: PathBuf,
     },
     /// Pre-fill a candidate from a Yukon-style benchmark.json
     Import {
@@ -96,7 +101,7 @@ fn main() -> ExitCode {
             )
             .map(|dir| println!("created {}", dir.display()))
         }
-        Command::Preflight { .. } => stub("preflight"),
+        Command::Preflight { slug, root, out } => run_preflight(&root.join(&slug), &out),
         Command::Site { dir, out } => {
             site::build(&dir, &out).map(|p| println!("wrote {} (internal only)", p.display()))
         }
@@ -131,4 +136,20 @@ fn import(json: &Path, url: &str, out: &Path) -> Result<(), String> {
         println!("wrote {}", path.display());
     }
     Ok(())
+}
+
+/// Prints the report, writes it as JSON, and fails if anything blocks launch.
+fn run_preflight(dir: &Path, out: &Path) -> Result<(), String> {
+    let report = preflight::run_all(dir)?;
+    print!("{}", preflight::render(&report));
+    std::fs::create_dir_all(out).map_err(|e| format!("{}: {e}", out.display()))?;
+    let path = out.join(format!("{}.json", report.slug));
+    let json = serde_json::to_string_pretty(&report.json()).map_err(|e| e.to_string())?;
+    std::fs::write(&path, json + "\n").map_err(|e| format!("{}: {e}", path.display()))?;
+    println!("wrote {}", path.display());
+    if report.blocked() {
+        Err("preflight blocked".into())
+    } else {
+        Ok(())
+    }
 }

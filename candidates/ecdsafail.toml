@@ -1,0 +1,73 @@
+# Calibration set (#6). Measured 2026-09-30.
+[candidate]
+slug = "ecdsafail"
+title = "ECDSA.fail: point-addition circuit (qubits × Toffoli)"
+family = "resource"
+direction = "minimise"
+category = "rust"
+url = "https://github.com/Ryun1/ecdsafail-challenge"
+editable = ["src/point_add"]
+
+[gates.verifiable]
+pass = true
+evidence = "classical simulation on random inputs (50k+ after the finite-set gaming fix), arXiv 2609.09582"
+
+[gates.scalar_objective]
+pass = true
+evidence = "qubits × Toffoli count, benchmark.json direction -"
+
+[gates.bounded]
+pass = true
+evidence = "1.4-1.9 min on ubuntu-24.04 2 vCPU (calibrate runs 36713485943, 36713844990)"
+
+[gates.baseline]
+pass = true
+evidence = "benchmark.sh passes at 708d567 (same runs)"
+
+[scores.expert_scarcity]
+value = 5
+evidence = "quantum resource estimation for ECDLP: a handful of groups (Roetteler et al. 2017, Litinski 2023, Gidney); arXiv 2609.09582"
+
+[scores.headroom]
+value = 4
+evidence = "86% Q×T reduction during the challenge (arXiv 2609.09582); frontier still moving"
+
+[scores.eval_cost]
+value = 5
+evidence = "1.4-1.9 min on 2 vCPU (measured)"
+
+[scores.noise]
+value = 5
+evidence = "deterministic gate/qubit count"
+
+[scores.gaming_resistance]
+value = 3
+evidence = "participant code runs in the judge (bwrap sandboxed); finite test set was gamed before the 50k random-input fix"
+
+[scores.fidelity]
+value = 3
+evidence = "benchmark interface diverged from windowed Shor (arXiv 2609.09582 lessons)"
+
+[scores.value]
+value = 4
+evidence = "sharpens quantum threat timelines for secp256k1 ECDSA"
+
+[scores.decomposability]
+value = 5
+evidence = "400+ promoted steps from >100 contributors (arXiv 2609.09582)"
+
+[scores.prior_art]
+value = 4
+evidence = "papers + open circuits (Roetteler 2017, Litinski 2023)"
+
+[laptop]
+evidence = "Apple M5 32 GB local: setup+benchmark 2.7 min; x86: ubuntu-24.04 2 vCPU 8 GB proxy 1.4-1.9 min"
+apple = { produce = "yes", verify = "yes", score = "yes" }
+x86 = { produce = "yes", verify = "yes", score = "yes" }
+
+[peaks]
+minutes = 1.9
+ram_gb = 0.78
+disk_gb = 1.02
+gpu = false
+evidence = "calibrate runs 36713485943 + 36713844990, ubuntu-24.04 2 vCPU, AMD EPYC 9V45; worst of two"

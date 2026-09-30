@@ -1,0 +1,66 @@
+# First challenge (PLAN.md §7b). Measured 2026-09-30 on Apple M5 (local).
+[candidate]
+slug = "pedersen"
+title = "Pedersen hash on the STARK curve (cairo-vm builtin path)"
+family = "perf"
+direction = "minimise"
+category = "rust"
+url = "https://github.com/lambdaclass/lambdaworks"
+editable = ["candidate/"]
+
+[gates.verifiable]
+pass = true
+evidence = "bit-exact differential vs lambdaworks + starknet-crypto 0.6.2 (independent starknet-ff); 20k random inputs agree (measured)"
+
+[gates.scalar_objective]
+pass = true
+evidence = "Callgrind instruction count on a seeded workload (PLAN.md §7a)"
+
+[gates.bounded]
+pass = true
+evidence = "seconds per run"
+
+[gates.baseline]
+pass = true
+evidence = "lambdaworks 0.13 PedersenStarkCurve matches starknet-crypto 0.6.2 on 20k inputs (measured)"
+
+[scores.expert_scarcity]
+value = 3
+evidence = "EC and field optimisation is a known craft"
+
+[scores.headroom]
+value = 2
+evidence = "no faster implementation known: lambdaworks is 1.4x faster than starknet-ff; starknet-crypto 0.8 just wraps lambdaworks (measured)"
+
+[scores.eval_cost]
+value = 5
+evidence = "seconds"
+
+[scores.noise]
+value = 5
+evidence = "instruction count is deterministic given the seed"
+
+[scores.gaming_resistance]
+value = 4
+evidence = "salted inputs, two independent oracles, wall-time guard"
+
+[scores.fidelity]
+value = 5
+evidence = "the code cairo-vm's Pedersen builtin runs"
+
+[scores.value]
+value = 3
+evidence = "widely computed off-chain (storage commitments); legacy for new hashing"
+
+[scores.decomposability]
+value = 4
+evidence = "field mul, coordinates, window sizes, batching: independent steps"
+
+[scores.prior_art]
+value = 4
+evidence = "EC literature + lambdaworks/starknet-ff source"
+
+[laptop]
+evidence = "planned kit (PLAN.md §7a): verify native anywhere; score needs Valgrind (Linux), Mac via Docker with arm64 counts. Re-measure when #10 lands"
+apple = { produce = "yes", verify = "yes", score = "yes-slow" }
+x86 = { produce = "yes", verify = "yes", score = "yes" }

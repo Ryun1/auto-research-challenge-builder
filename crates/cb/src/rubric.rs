@@ -164,10 +164,11 @@ fn suggestions(l: &Laptop) -> Vec<String> {
     let mut out = Vec::new();
     let both = |pick: fn(&Facts) -> Fact| [pick(&l.apple), pick(&l.x86)];
     let fails = |pick: fn(&Facts) -> Fact| both(pick).iter().any(|f| *f != Fact::Yes);
-    // One class fine, the other not: an arch-specific path (x86 SIMD, CUDA).
+    // Impossible on one class only: an arch-specific path (x86 SIMD, CUDA).
+    // Slow on one class (Valgrind in Docker on a Mac) is not a split.
     let split = |pick: fn(&Facts) -> Fact| {
         let [a, x] = both(pick);
-        (a == Fact::Yes) != (x == Fact::Yes)
+        (a == Fact::No) != (x == Fact::No)
     };
     if fails(|f| f.produce) {
         out.push("produce: ship a small-size local profile so participants can generate candidates on a laptop".into());
@@ -458,5 +459,14 @@ mod tests {
         assert!(
             s[0].starts_with("verify:") && s[1].starts_with("score:") && s[2].starts_with("arch:")
         );
+        let mac_slow = Laptop {
+            apple: Facts {
+                score: Fact::YesSlow,
+                ..all_yes()
+            },
+            x86: all_yes(),
+            evidence: "m".into(),
+        };
+        assert_eq!(suggestions(&mac_slow).len(), 1); // score only, no arch
     }
 }

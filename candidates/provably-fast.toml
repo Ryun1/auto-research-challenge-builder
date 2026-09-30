@@ -1,0 +1,66 @@
+# Calibration set (#6). Measured 2026-09-30. Repo is INTERNAL (starknet-innovation), so it can't be measured in this repo's CI.
+[candidate]
+slug = "provably-fast"
+title = "provably.fast: Stwo circle-FFT prover speedups"
+family = "perf"
+direction = "maximise"
+category = "rust"
+url = "https://github.com/starknet-innovation/provably.fast"
+editable = ["candidate-prover"]
+
+[gates.verifiable]
+pass = true
+evidence = "bit-exact oracle on salted inputs + strict Stwo profile verify (research/discovery/oracle, crates/strict-profile)"
+
+[gates.scalar_objective]
+pass = true
+evidence = "paired speedup, geomean of mirrored blocks (pvfast_lab/core.py:2722)"
+
+[gates.bounded]
+pass = true
+evidence = "campaign runs are minutes on the pinned x86 evaluator host (README)"
+
+[gates.baseline]
+pass = true
+evidence = "provably-fast-baseline build passes at 4ad7a2b8 on Apple M5 (measured, 1.6 min)"
+
+[scores.expert_scarcity]
+value = 4
+evidence = "Stwo circle-STARK prover internals: StarkWare plus a small outside group"
+
+[scores.headroom]
+value = 2
+evidence = "README: no verified performance promotion yet; Stwo is already heavily optimised"
+
+[scores.eval_cost]
+value = 4
+evidence = "baseline build+run 1.6 min on M5; paired campaigns take minutes"
+
+[scores.noise]
+value = 2
+evidence = "wall time on CPU: 3% min speedup against an 8% rel-MAD cap; noise close to the threshold"
+
+[scores.gaming_resistance]
+value = 4
+evidence = "bit-exact oracle on fresh salts, 2 editable files, banned-token policy"
+
+[scores.fidelity]
+value = 5
+evidence = "benchmark is the Stwo prover itself"
+
+[scores.value]
+value = 5
+evidence = "prover speed ships straight to Starknet"
+
+[scores.decomposability]
+value = 3
+evidence = "kernel-level steps exist; many need cross-cutting changes"
+
+[scores.prior_art]
+value = 3
+evidence = "FFT/NTT literature is rich; the circle-FFT specifics are mostly Stwo code"
+
+[laptop]
+evidence = "Apple: measured, baseline builds and runs on arm64 (M5 32 GB, 1.6 min, 4ad7a2b8); official timing profile is Linux x86 with cgroups, so local timing is relative only. x86: documented target, not measured here (internal repo)"
+apple = { produce = "yes", verify = "yes", score = "yes-slow" }
+x86 = { produce = "yes", verify = "yes", score = "yes-slow" }

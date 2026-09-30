@@ -1,0 +1,75 @@
+# Calibration set (#6). Measured 2026-09-30.
+[candidate]
+slug = "qsb-pinning"
+title = "QSB pinning grinder (CUDA)"
+family = "perf"
+direction = "maximise"
+category = "cuda"
+url = "https://github.com/Layr-Labs/quantum-safe-bitcoin-challenge"
+editable = ["candidates/pinning"]
+min_improvement_bips = 100
+max_bytes = 8388608
+
+[gates.verifiable]
+pass = true
+evidence = "every submitted hit re-derived independently (harness/verify.py)"
+
+[gates.scalar_objective]
+pass = true
+evidence = "verified candidate throughput, direction +"
+
+[gates.bounded]
+pass = true
+evidence = "60 min on self-hosted GPU runner (benchmark workflow timeout)"
+
+[gates.baseline]
+pass = true
+evidence = "imported commit scored once as the floor (README)"
+
+[scores.expert_scarcity]
+value = 2
+evidence = "CUDA secp256k1 grinding is a known craft (vanity/keysearch tools)"
+
+[scores.headroom]
+value = 4
+evidence = "baseline is deliberately unoptimised (README)"
+
+[scores.eval_cost]
+value = 4
+evidence = "minutes on one GPU"
+
+[scores.noise]
+value = 3
+evidence = "GPU throughput, 1% min improvement"
+
+[scores.gaming_resistance]
+value = 4
+evidence = "hits re-derived independently; harness non-editable"
+
+[scores.fidelity]
+value = 4
+evidence = "the kernel is the real grinder"
+
+[scores.value]
+value = 3
+evidence = "quantum-safe Bitcoin scheme cost; indirect for Starknet"
+
+[scores.decomposability]
+value = 4
+evidence = "many independent kernel steps"
+
+[scores.prior_art]
+value = 5
+evidence = "abundant open CUDA ECC/SHA-256 code"
+
+[laptop]
+evidence = "README: functional smoke test runs in seconds on a slow CPU reference, no GPU; scoring needs CUDA. Mac has no CUDA; x86 laptop can compile with nvcc but not run without an NVIDIA GPU"
+apple = { produce = "no", verify = "yes", score = "no" }
+x86 = { produce = "yes-slow", verify = "yes", score = "no" }
+
+[peaks]
+minutes = 60.0
+ram_gb = 8.0
+disk_gb = 10.0
+gpu = true
+evidence = "needs a CUDA GPU (self-hosted runner, nvidia-smi check in benchmark workflow)"

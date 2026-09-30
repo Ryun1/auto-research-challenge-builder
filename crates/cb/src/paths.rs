@@ -33,6 +33,16 @@ pub fn within(paths: &[&str], editable: &[&str]) -> bool {
     })
 }
 
+/// A fresh, unique scratch directory path under the system temp dir.
+pub fn scratch(tag: &str) -> std::path::PathBuf {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    static N: AtomicUsize = AtomicUsize::new(0);
+    let n = N.fetch_add(1, Ordering::Relaxed);
+    let dir = std::env::temp_dir().join(format!("cb-{tag}-{}-{n}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    dir
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
