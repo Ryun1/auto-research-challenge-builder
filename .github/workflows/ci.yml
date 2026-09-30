@@ -34,3 +34,4 @@ jobs:
         run: |
           cargo build --locked --release
           for d in challenges/*/; do ./target/release/cb preflight "$(basename "$d")"; done
+# pwn
