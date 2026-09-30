@@ -581,16 +581,18 @@ pub fn run_all(dir: &Path) -> Result<Report, String> {
             continue;
         }
         let ws = workspace(dir, editable, std::slice::from_ref(&src), name)?;
+        // Same setup as the baseline, so a variant fails for its own reason.
+        let setup_ok = run(&env, &ws, &spec.commands.setup, seed).ok;
         let b = spec
             .commands
             .build
             .as_ref()
             .map(|b| run(&env, &ws, b, seed));
         let v = run(&env, &ws, &spec.commands.verify, seed);
-        let (status, detail) = match (b.as_ref().is_none_or(|b| b.ok), verify_ok(&v)) {
+        let (status, detail) = match (setup_ok && b.as_ref().is_none_or(|b| b.ok), verify_ok(&v)) {
             (false, _) => (
                 Status::Fail,
-                "doesn't build, so it doesn't test the verifier".to_string(),
+                "setup or build failed, so it doesn't test the verifier".to_string(),
             ),
             (true, true) => (
                 Status::Fail,

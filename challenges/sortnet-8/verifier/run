@@ -1,0 +1,4 @@
+#!/usr/bin/env bash
+# Data check only: never runs participant code.
+set -euo pipefail
+exec python3 verifier/sortnet.py verify

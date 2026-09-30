@@ -1,0 +1,23 @@
+[challenge]
+slug      = "sortnet-8"
+family    = "resource"
+direction = "minimise"
+status    = "draft"          # draft | open | closed
+runner    = "ubuntu-24.04"   # pinned image
+
+[paths]
+editable  = ["candidate/"]   # everything else is refused
+max_bytes = 4096
+
+[commands]
+setup  = "./setup.sh"
+build  = "./build.sh"     # the only step that treats submission bytes as code
+verify = "./verifier/run"  # exit 0 + JSON {ok, detail}
+score  = "./bench/run"     # JSON {metrics: {...}}
+
+[objective]
+expr                 = "comparators"
+min_improvement_bips = 0  # any network with fewer comparators is a record
+
+[inputs]
+salted = true  # seed drawn by the harness after the build, recorded after

@@ -1,0 +1,4 @@
+#!/usr/bin/env bash
+# Policy, then compile and check in a temp dir (sandboxed in the pipeline).
+set -euo pipefail
+exec python3 judge/check.py verify

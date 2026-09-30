@@ -1,0 +1,23 @@
+[challenge]
+slug      = "lean-sum"
+family    = "proof"
+direction = "minimise"
+status    = "draft"          # draft | open | closed
+runner    = "ubuntu-24.04"   # pinned image
+
+[paths]
+editable  = ["candidate/"]   # everything else is refused
+max_bytes = 16384
+
+[commands]
+setup  = "./setup.sh"
+# no build: verify elaborates the Lean source itself, sandboxed
+verify = "./verifier/run"  # exit 0 + JSON {ok, detail}
+score  = "./bench/run"     # JSON {metrics: {...}}
+
+[objective]
+expr                 = "proof_chars"
+min_improvement_bips = 0    # your call (100 = 1%); preflight warns if it's under measured noise
+
+[inputs]
+salted = true  # seed drawn by the harness after the build, recorded after
