@@ -130,12 +130,13 @@ struct Run {
 }
 
 /// Runs `bash -c cmd` in `dir` with the seed in `CB_SEED`, killed at the timeout.
-fn run(dir: &Path, cmd: &str, seed: u64) -> Run {
+fn run(env: &[(String, String)], dir: &Path, cmd: &str, seed: u64) -> Run {
     let start = Instant::now();
     let child = Command::new("bash")
         .args(["-c", cmd])
         .current_dir(dir)
         .env("CB_SEED", seed.to_string())
+        .envs(env.iter().map(|(k, v)| (k, v)))
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -298,6 +299,20 @@ fn threat_model_gaps(text: &str) -> Vec<String> {
 pub fn run_all(dir: &Path) -> Result<Report, String> {
     let spec = Spec::load(dir)?;
     let seed = seed();
+    // [perf] settings reach the harness as env (the Rust kit reads these).
+    let env: Vec<(String, String)> = spec
+        .perf
+        .as_ref()
+        .map(|p| {
+            vec![
+                ("CB_PERF_BLOCKS".into(), p.blocks.to_string()),
+                (
+                    "CB_PERF_MAX_DISPERSION".into(),
+                    p.max_dispersion.to_string(),
+                ),
+            ]
+        })
+        .unwrap_or_default();
     let mut r = Report {
         slug: spec.challenge.slug.clone(),
         host: host(),
@@ -334,21 +349,48 @@ pub fn run_all(dir: &Path) -> Result<Report, String> {
         Err(e) => r.push("path policy", Status::Fail, e),
     }
 
+    // Rust kit: the baseline must pass the token policy it imposes.
+    if let Some(rust) = &spec.rust {
+        match crate::rustpolicy::check_dir(&dir.join("baseline"), &rust.allow) {
+            Ok(()) => r.push(
+                "rust policy",
+                Status::Pass,
+                format!("baseline clean; allowed: {:?}", rust.allow),
+            ),
+            Err(e) => r.push("rust policy", Status::Fail, e.join("; ")),
+        }
+    }
+    let size = du_bytes(&dir.join("baseline"));
+    if size > spec.paths.max_bytes {
+        r.push(
+            "size cap",
+            Status::Fail,
+            format!(
+                "baseline is {size} bytes > max_bytes {}",
+                spec.paths.max_bytes
+            ),
+        );
+    }
+
     // Baseline: setup, build, verify, score. Measured for laptop facts and peaks.
     let base = workspace(dir, editable, &dir.join("baseline"), "baseline")?;
-    let setup = run(&base, &spec.commands.setup, seed);
+    let setup = run(&env, &base, &spec.commands.setup, seed);
     if !setup.ok {
         r.push("setup", Status::Fail, setup.detail);
         return Ok(r);
     }
-    let build = spec.commands.build.as_ref().map(|b| run(&base, b, seed));
+    let build = spec
+        .commands
+        .build
+        .as_ref()
+        .map(|b| run(&env, &base, b, seed));
     if let Some(b) = build.as_ref().filter(|b| !b.ok) {
         r.push("baseline builds", Status::Fail, b.detail.clone());
         return Ok(r);
     }
     let disk0 = du_bytes(&base);
-    let verify = run(&base, &spec.commands.verify, seed);
-    let score = run(&base, &spec.commands.score, seed);
+    let verify = run(&env, &base, &spec.commands.verify, seed);
+    let score = run(&env, &base, &spec.commands.score, seed);
     let peaks = (
         (verify.secs + score.secs) / 60.0,
         max_child_rss_gb(),
@@ -379,7 +421,7 @@ pub fn run_all(dir: &Path) -> Result<Report, String> {
     }
     if spec.inputs.salted {
         let fresh = self::seed();
-        let v2 = run(&base, &spec.commands.verify, fresh);
+        let v2 = run(&env, &base, &spec.commands.verify, fresh);
         let status = if verify_ok(&v2) {
             Status::Pass
         } else {
@@ -396,6 +438,22 @@ pub fn run_all(dir: &Path) -> Result<Report, String> {
         .as_ref()
         .and_then(|m| m.get(expr))
         .and_then(Value::as_f64);
+    if let Some(g) = base_metrics
+        .as_ref()
+        .and_then(|m| m.get("guard"))
+        .and_then(Value::as_str)
+    {
+        let status = if g == "pass" {
+            Status::Pass
+        } else {
+            Status::Warn
+        };
+        r.push(
+            "wall-time guard",
+            status,
+            format!("A/A guard on the baseline: {g}"),
+        );
+    }
     match value {
         Some(v) => r.push(
             "baseline scores",
@@ -425,8 +483,12 @@ pub fn run_all(dir: &Path) -> Result<Report, String> {
             continue;
         }
         let ws = workspace(dir, editable, &src, name)?;
-        let b = spec.commands.build.as_ref().map(|b| run(&ws, b, seed));
-        let v = run(&ws, &spec.commands.verify, seed);
+        let b = spec
+            .commands
+            .build
+            .as_ref()
+            .map(|b| run(&env, &ws, b, seed));
+        let v = run(&env, &ws, &spec.commands.verify, seed);
         let (status, detail) = match (b.as_ref().is_none_or(|b| b.ok), verify_ok(&v)) {
             (false, _) => (
                 Status::Fail,
@@ -447,7 +509,7 @@ pub fn run_all(dir: &Path) -> Result<Report, String> {
         // A/A: baseline scored as the candidate must stay inside the bar.
         let mut values = Vec::new();
         for _ in 0..AA_SESSIONS {
-            match metrics(&run(&base, &spec.commands.score, self::seed()))
+            match metrics(&run(&env, &base, &spec.commands.score, self::seed()))
                 .and_then(|m| m.get(expr).and_then(Value::as_f64))
             {
                 Some(v) => values.push(v),
@@ -487,8 +549,8 @@ pub fn run_all(dir: &Path) -> Result<Report, String> {
         }
     } else {
         // Determinism: same seed, same metrics.
-        let again = metrics(&run(&base, &spec.commands.score, seed));
-        let v1 = verify_ok(&run(&base, &spec.commands.verify, seed));
+        let again = metrics(&run(&env, &base, &spec.commands.score, seed));
+        let v1 = verify_ok(&run(&env, &base, &spec.commands.verify, seed));
         match (&base_metrics, &again) {
             (Some(a), Some(b)) if a == b && v1 => r.push(
                 "determinism",
@@ -618,6 +680,39 @@ mod tests {
         assert!(r.blocked());
         assert_eq!(status(&r, "threat model"), Status::Fail);
         assert_eq!(status(&r, "baseline passes"), Status::Fail);
+    }
+
+    /// A fresh `cb new --kit rust` challenge passes preflight once its threat
+    /// model is answered. Scoring needs valgrind (Linux); without it only the
+    /// score checks are skipped.
+    #[test]
+    fn rust_kit_toy_passes() {
+        let root = crate::paths::scratch("kit");
+        let dir = scaffold(&root, "toy", "perf", Some("rust")).unwrap();
+        std::fs::write(dir.join("THREAT_MODEL.md"), TM).unwrap();
+        let r = run_all(&dir).unwrap();
+        let text = render(&r);
+        for name in [
+            "path policy",
+            "rust policy",
+            "baseline passes",
+            "salted inputs",
+        ] {
+            assert_eq!(status(&r, name), Status::Pass, "{name}\n{text}");
+        }
+        for name in BROKEN {
+            assert_eq!(
+                status(&r, &format!("broken: {name}")),
+                Status::Pass,
+                "{name}\n{text}"
+            );
+        }
+        if cmd_out("valgrind", &["--version"]).is_some() {
+            assert!(!r.blocked(), "{text}");
+            assert_eq!(status(&r, "A/A band"), Status::Pass, "{text}"); // instruction ratio is exactly 1
+        } else {
+            eprintln!("valgrind not found: skipped score checks\n{text}");
+        }
     }
 
     #[test]

@@ -1,5 +1,6 @@
 [workspace]
 members = ["crates/cb"]
+exclude = ["kits", "challenges"]
 resolver = "2"
 
 [workspace.package]

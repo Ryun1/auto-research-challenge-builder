@@ -1,0 +1,8 @@
+#!/usr/bin/env bash
+# Local scoring on a Mac: valgrind in a Linux container. Counts on arm64
+# differ from the official x86_64 runner; compare speedup vs baseline, not
+# raw instructions.
+set -euo pipefail
+: "${CB_SEED:=$RANDOM$RANDOM}"
+docker run --rm -e CB_SEED="$CB_SEED" -v "$PWD":/w -w /w rust:1.97.1 bash -c \
+  'apt-get update -qq && apt-get install -y -qq valgrind >/dev/null && CARGO_TARGET_DIR=target/docker cargo build --release --locked -p harness --bins && ./target/docker/release/score'

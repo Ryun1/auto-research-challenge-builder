@@ -18,6 +18,8 @@ pub struct Spec {
     pub commands: Commands,
     pub objective: Objective,
     pub perf: Option<Perf>,
+    /// Rust kit only.
+    pub rust: Option<RustOpts>,
     #[serde(default)]
     pub inputs: Inputs,
 }
@@ -71,6 +73,14 @@ pub struct Perf {
     pub blocks: u32,
     /// Cap on rel-MAD = median(|x − median|) / median, per side.
     pub max_dispersion: f64,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RustOpts {
+    /// Opt-in token groups: "unsafe", "asm", "target_feature".
+    #[serde(default)]
+    pub allow: Vec<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -174,6 +184,30 @@ impl Spec {
             }
             _ => {}
         }
+        match (c.kit.as_deref(), &self.rust) {
+            (Some("rust"), None) => return Err("kit rust needs a [rust] section".into()),
+            (Some("rust"), Some(_)) if c.family != "perf" => {
+                return Err(
+                    "kit rust is for the perf family (instruction count + wall-time guard)".into(),
+                )
+            }
+            (k, Some(_)) if k != Some("rust") => {
+                return Err("[rust] is only for kit = \"rust\"".into())
+            }
+            (_, Some(r)) => {
+                if let Some(bad) = r
+                    .allow
+                    .iter()
+                    .find(|a| !crate::rustpolicy::OPT_IN.contains(&a.as_str()))
+                {
+                    return Err(format!(
+                        "[rust] allow: {bad:?} is not one of {:?}",
+                        crate::rustpolicy::OPT_IN
+                    ));
+                }
+            }
+            _ => {}
+        }
         if let Some(p) = &self.perf {
             if p.blocks == 0 || !(p.max_dispersion > 0.0 && p.max_dispersion < 1.0) {
                 return Err("perf: blocks > 0 and 0 < max_dispersion < 1".into());
@@ -201,6 +235,13 @@ fn spec_toml(slug: &str, family: &str, kit: Option<&str>) -> String {
         "math" => ("maximise", "value", None, ""),
         _ => ("minimise", "cost", Some("./build.sh"), ""),
     };
+    let (editable, rust) = match kit {
+        Some("rust") => (
+            "candidate/src",
+            "\n[rust]\nallow = []  # opt in: \"unsafe\", \"asm\", \"target_feature\" (and drop the forbid lint in candidate/Cargo.toml)\n",
+        ),
+        _ => ("candidate/", ""),
+    };
     let kit = kit.map(|k| format!("kit = \"{k}\"\n")).unwrap_or_default();
     let build = build
         .map(|b| {
@@ -218,7 +259,7 @@ status    = "draft"          # draft | open | closed
 {kit}runner    = "ubuntu-24.04"   # pinned image
 
 [paths]
-editable  = ["candidate/"]   # everything else is refused
+editable  = ["{editable}"]   # everything else is refused
 max_bytes = 8388608
 
 [commands]
@@ -229,7 +270,7 @@ score  = "./bench/run"     # JSON {{metrics: {{...}}}}
 [objective]
 expr                 = "{expr}"
 min_improvement_bips = 100  # your call (100 = 1%); preflight warns if it's under measured noise
-{perf}
+{perf}{rust}
 [inputs]
 salted = true  # seed drawn by the harness after the build, recorded after
 "#
@@ -281,6 +322,27 @@ fn submitting(slug: &str) -> String {
 
 const TODO_SCRIPT: &str = "#!/usr/bin/env bash\n# TODO: implement. Fails closed until then.\nset -euo pipefail\necho '{\"ok\": false, \"detail\": \"not implemented\"}'\nexit 1\n";
 
+/// Kit templates, e.g. kits/rust. Resolved at build time: `cb` runs from this repo.
+const KITS_DIR: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../../kits");
+
+/// Recursive copy, skipping build output. Keeps the executable bit.
+fn copy_tree(src: &Path, dst: &Path) -> std::io::Result<()> {
+    std::fs::create_dir_all(dst)?;
+    for entry in std::fs::read_dir(src)? {
+        let entry = entry?;
+        let (from, to) = (entry.path(), dst.join(entry.file_name()));
+        if entry.file_name() == "target" {
+            continue;
+        }
+        if entry.file_type()?.is_dir() {
+            copy_tree(&from, &to)?;
+        } else {
+            std::fs::copy(&from, &to)?; // copies permissions
+        }
+    }
+    Ok(())
+}
+
 /// Creates `<root>/<slug>/`. Refuses to touch an existing directory.
 pub fn scaffold(
     root: &Path,
@@ -309,9 +371,16 @@ pub fn scaffold(
         }
         Ok(())
     };
+    if let Some(kit) = kit {
+        let src = Path::new(KITS_DIR).join(kit);
+        copy_tree(&src, &dir).map_err(|e| format!("copying kit {}: {e}", src.display()))?;
+    }
     write("challenge.toml", &spec, false)?;
     write("THREAT_MODEL.md", THREAT_MODEL, false)?;
     write("SUBMITTING.md", &submitting(slug), false)?;
+    if kit.is_some() {
+        return Ok(dir); // the kit ships setup, build, verifier, bench, baseline, broken
+    }
     write(
         "setup.sh",
         "#!/usr/bin/env bash\nset -euo pipefail\n# Install toolchains. Idempotent.\n",

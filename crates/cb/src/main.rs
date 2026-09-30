@@ -8,6 +8,7 @@ mod paths;
 mod policy;
 mod preflight;
 mod rubric;
+mod rustpolicy;
 mod site;
 
 /// Challenge builder: evaluate candidate problems, build and run challenges.
