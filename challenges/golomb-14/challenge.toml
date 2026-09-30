@@ -2,7 +2,7 @@
 slug      = "golomb-14"
 family    = "math"
 direction = "minimise"
-status    = "draft"          # draft | open | closed
+status    = "open"           # draft | open | closed
 runner    = "ubuntu-24.04"   # pinned image
 
 [paths]
