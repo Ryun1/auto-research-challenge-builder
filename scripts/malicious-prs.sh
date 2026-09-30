@@ -30,7 +30,9 @@ for c in "${CASES[@]}"; do
   git checkout -q --detach "$base"
   git checkout -q -b "$branch"
   bash -c "$change"
-  git add -A && git commit -qm "malicious: $name" && git push -q origin "$branch" 2>/dev/null
+  # A gitlink lives only in the index; add -A would drop it.
+  [ "$name" = gitlink ] || git add -A
+  git commit -qm "malicious: $name" && git push -q origin "$branch" 2>/dev/null
   pr=$(gh pr create --repo "$REPO" --base main --head "$branch" --title "malicious: $name" --body "#13 suite; expect $expect" | grep -o '[0-9]*$')
   body=""
   for _ in $(seq 1 90); do
