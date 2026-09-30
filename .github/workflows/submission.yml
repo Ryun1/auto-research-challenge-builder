@@ -1,0 +1,88 @@
+# PR scoring (PLAN.md §4, #12). The judge always comes from main:
+# pull_request_target runs THIS file from the base branch, never the PR's copy.
+# Submission bytes are data: the gate never runs them, the score job
+# compiles them offline and runs verify/score as nobody with no network.
+# No secrets, read-only token. The score it uploads is a claim; comment.yml
+# posts it, and only promote.yml (on main) decides the record.
+name: Submission
+
+on:
+  pull_request_target:
+    types: [opened, synchronize, reopened]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: submission-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  gate:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    outputs:
+      ok: ${{ steps.gate.outputs.ok }}
+      slug: ${{ steps.gate.outputs.slug }}
+      runner: ${{ steps.gate.outputs.runner }}
+      kit: ${{ steps.gate.outputs.kit }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.pull_request.base.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Fetch the PR head as objects only (never checked out)
+        run: |
+          git fetch --no-tags https://github.com/${{ github.repository }} "+refs/pull/${PR}/head:refs/cb/head"
+          test "$(git rev-parse refs/cb/head)" = "$HEAD_SHA"
+        env:
+          PR: ${{ github.event.pull_request.number }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+      - run: rustup toolchain install
+      - run: cargo build --locked --release
+      - id: gate
+        run: |
+          set +e
+          ./target/release/cb gate --base "$BASE_SHA" --head "$HEAD_SHA" --out submission --json gate.json
+          set -e
+          for k in ok slug runner kit; do echo "$k=$(jq -r ".$k // empty" gate.json)" >> "$GITHUB_OUTPUT"; done
+          cat gate.json
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: gate
+          path: |
+            gate.json
+            submission/
+          if-no-files-found: error
+
+  score:
+    needs: gate
+    if: needs.gate.outputs.ok == 'true'
+    runs-on: ${{ needs.gate.outputs.runner }}
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.pull_request.base.sha }}
+          persist-credentials: false
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: gate
+          path: gate
+      - run: rustup toolchain install
+      - if: needs.gate.outputs.kit == 'rust'
+        run: sudo apt-get install -y -qq valgrind
+      - run: cargo build --locked --release
+      - name: Build, then verify + score sandboxed
+        run: ./target/release/cb score "$SLUG" --submission gate/submission --sandbox --out score.json
+        env:
+          SLUG: ${{ needs.gate.outputs.slug }}
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        if: always()
+        with:
+          name: score
+          path: score.json

@@ -106,14 +106,14 @@ pub fn host() -> String {
     )
 }
 
-fn cmd_out(cmd: &str, args: &[&str]) -> Option<String> {
+pub(crate) fn cmd_out(cmd: &str, args: &[&str]) -> Option<String> {
     let out = Command::new(cmd).args(args).output().ok()?;
     out.status
         .success()
         .then(|| String::from_utf8_lossy(&out.stdout).trim().to_string())
 }
 
-fn seed() -> u64 {
+pub(crate) fn seed() -> u64 {
     use std::io::Read;
     let mut b = [0u8; 8];
     std::fs::File::open("/dev/urandom")
@@ -122,21 +122,70 @@ fn seed() -> u64 {
     u64::from_le_bytes(b)
 }
 
-struct Run {
-    ok: bool,
-    stdout: String,
-    secs: f64,
-    detail: String,
+pub(crate) struct Run {
+    pub ok: bool,
+    pub stdout: String,
+    pub secs: f64,
+    pub detail: String,
 }
 
 /// Runs `bash -c cmd` in `dir` with the seed in `CB_SEED`, killed at the timeout.
 fn run(env: &[(String, String)], dir: &Path, cmd: &str, seed: u64) -> Run {
+    run_in(false, env, dir, cmd, seed)
+}
+
+/// With `sandbox`, the command runs as `nobody` (uid 65534) with no network,
+/// via `sudo unshare --net` + `setpriv` (Linux runners have passwordless sudo).
+/// `dir` must be readable by `nobody`; it can't write there.
+pub(crate) fn run_in(
+    sandbox: bool,
+    env: &[(String, String)],
+    dir: &Path,
+    cmd: &str,
+    seed: u64,
+) -> Run {
     let start = Instant::now();
-    let child = Command::new("bash")
-        .args(["-c", cmd])
+    let seed_env = ("CB_SEED".to_string(), seed.to_string());
+    let mut command = if sandbox {
+        let mut c = Command::new("sudo");
+        c.args([
+            "unshare",
+            "--net",
+            "--",
+            "setpriv",
+            "--reuid=65534",
+            "--regid=65534",
+            "--clear-groups",
+            "--no-new-privs",
+            "--",
+            "env",
+            "-i",
+            "PATH=/usr/local/bin:/usr/bin:/bin",
+            "HOME=/tmp",
+        ]);
+        c.args(
+            env.iter()
+                .chain(std::iter::once(&seed_env))
+                .map(|(k, v)| format!("{k}={v}")),
+        );
+        c.args(["bash", "-c", cmd]);
+        c
+    } else {
+        let mut c = Command::new("bash");
+        c.args(["-c", cmd])
+            .env(&seed_env.0, &seed_env.1)
+            .envs(env.iter().map(|(k, v)| (k, v)));
+        c
+    };
+    // Never hand CI credentials to challenge commands (the build compiles
+    // submission bytes): ACTIONS_RUNTIME_TOKEN can upload artifacts.
+    for (k, _) in std::env::vars() {
+        if k.starts_with("ACTIONS_") || k.contains("TOKEN") || k.starts_with("GITHUB_") {
+            command.env_remove(k);
+        }
+    }
+    let child = command
         .current_dir(dir)
-        .env("CB_SEED", seed.to_string())
-        .envs(env.iter().map(|(k, v)| (k, v)))
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -204,14 +253,14 @@ fn run(env: &[(String, String)], dir: &Path, cmd: &str, seed: u64) -> Run {
 }
 
 /// Verify passes only on exit 0 with `{"ok": true}`.
-fn verify_ok(r: &Run) -> bool {
+pub(crate) fn verify_ok(r: &Run) -> bool {
     r.ok && serde_json::from_str::<Value>(r.stdout.trim())
         .ok()
         .and_then(|v| v["ok"].as_bool())
         == Some(true)
 }
 
-fn metrics(r: &Run) -> Option<Value> {
+pub(crate) fn metrics(r: &Run) -> Option<Value> {
     let v: Value = serde_json::from_str(r.stdout.trim()).ok()?;
     v.get("metrics").filter(|m| m.is_object()).cloned()
 }
@@ -228,7 +277,7 @@ fn max_child_rss_gb() -> f64 {
     bytes / 1e9
 }
 
-fn du_bytes(dir: &Path) -> u64 {
+pub(crate) fn du_bytes(dir: &Path) -> u64 {
     cmd_out("du", &["-sk", &dir.to_string_lossy()])
         .and_then(|s| s.split_whitespace().next()?.parse::<u64>().ok())
         .map(|kb| kb * 1024)

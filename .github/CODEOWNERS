@@ -1,0 +1,12 @@
+# Judge files need a maintainer review (PLAN.md §4). Enforced once branch
+# protection requires code-owner review on main.
+.github/                    @Ryun1
+crates/                     @Ryun1
+kits/                       @Ryun1
+challenges/*/challenge.toml @Ryun1
+challenges/*/verifier/      @Ryun1
+challenges/*/bench/         @Ryun1
+challenges/*/harness/       @Ryun1
+challenges/*/oracle/        @Ryun1
+challenges/*/reference/     @Ryun1
+challenges/*/Cargo.lock     @Ryun1

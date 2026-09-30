@@ -5,6 +5,7 @@ use std::process::ExitCode;
 mod candidate;
 mod challenge;
 mod paths;
+mod pipeline;
 mod policy;
 mod preflight;
 mod rubric;
@@ -69,6 +70,67 @@ enum Command {
         #[arg(long, default_value = "target/site")]
         out: PathBuf,
     },
+    /// PR gate (trusted): check base..head and export the editable files
+    Gate {
+        #[arg(long)]
+        base: String,
+        #[arg(long)]
+        head: String,
+        #[arg(long, default_value = ".")]
+        repo: PathBuf,
+        #[arg(long, default_value = "submission")]
+        out: PathBuf,
+        /// Where to write the gate result JSON
+        #[arg(long, default_value = "gate.json")]
+        json: PathBuf,
+    },
+    /// Build, verify and score a challenge; writes a score claim
+    Score {
+        slug: String,
+        #[arg(long, default_value = "challenges")]
+        root: PathBuf,
+        /// Score baseline/ instead of the checkout's editable files
+        #[arg(long, conflicts_with = "submission")]
+        baseline: bool,
+        /// Directory written by `cb gate`
+        #[arg(long)]
+        submission: Option<PathBuf>,
+        /// Run verify/score as nobody with no network (Linux, sudo)
+        #[arg(long)]
+        sandbox: bool,
+        #[arg(long, default_value = "score.json")]
+        out: PathBuf,
+    },
+    /// Decide an attempt's status and append it to results.jsonl (trusted)
+    Record {
+        slug: String,
+        #[arg(long, default_value = "challenges")]
+        root: PathBuf,
+        /// baseline | promotion | pr
+        #[arg(long)]
+        stage: String,
+        /// Score claims: two for baseline/promotion, one for pr
+        #[arg(long = "run", required = true)]
+        runs: Vec<PathBuf>,
+        #[arg(long)]
+        commit: String,
+        #[arg(long)]
+        by: String,
+        #[arg(long, default_value = "")]
+        model: String,
+        /// UTC timestamp, e.g. $(date -u +%FT%TZ)
+        #[arg(long)]
+        at: String,
+    },
+    /// Render a PR comment from gate/score/record JSON (untrusted text neutralised)
+    Comment {
+        #[arg(long)]
+        gate: PathBuf,
+        #[arg(long)]
+        score: Option<PathBuf>,
+        #[arg(long)]
+        entry: Option<PathBuf>,
+    },
     /// Write per-challenge feed JSON (toolkit Snapshot)
     Feed,
     /// Score candidates against the rubric
@@ -107,6 +169,95 @@ fn main() -> ExitCode {
             site::build(&dir, &out).map(|p| println!("wrote {} (internal only)", p.display()))
         }
         Command::Feed => stub("feed"),
+        Command::Gate {
+            base,
+            head,
+            repo,
+            out,
+            json,
+        } => {
+            let g = pipeline::gate(&repo, "challenges", &base, &head, &out);
+            let text = serde_json::to_string_pretty(&g.json(&base, &head)).unwrap();
+            std::fs::write(&json, text + "\n")
+                .map_err(|e| e.to_string())
+                .and_then(|_| {
+                    if g.errors.is_empty() {
+                        println!("gate ok: {}", g.slug.unwrap_or_default());
+                        Ok(())
+                    } else {
+                        Err(format!("gate refused:\n  {}", g.errors.join("\n  ")))
+                    }
+                })
+        }
+        Command::Score {
+            slug,
+            root,
+            baseline,
+            submission,
+            sandbox,
+            out,
+        } => {
+            let source = match (&submission, baseline) {
+                (Some(dir), _) => pipeline::Source::Submission(dir),
+                (None, true) => pipeline::Source::Baseline,
+                (None, false) => pipeline::Source::AsIs,
+            };
+            pipeline::score(&root, &slug, source, sandbox).and_then(|v| {
+                let text = serde_json::to_string_pretty(&v).unwrap();
+                println!("{text}");
+                std::fs::write(&out, text + "\n").map_err(|e| e.to_string())
+            })
+        }
+        Command::Record {
+            slug,
+            root,
+            stage,
+            runs,
+            commit,
+            by,
+            model,
+            at,
+        } => {
+            if !matches!(stage.as_str(), "baseline" | "promotion" | "pr") {
+                return fail("stage: baseline, promotion or pr");
+            }
+            runs.iter()
+                .map(|p| pipeline::read_claim(p))
+                .collect::<Result<Vec<_>, _>>()
+                .and_then(|runs| {
+                    let a = pipeline::Attempt {
+                        stage: &stage,
+                        commit: &commit,
+                        by: &by,
+                        model: &model,
+                        at: &at,
+                    };
+                    let entry = pipeline::record(&root, &slug, &runs, &a)?;
+                    let rc = pipeline::record_commit(&root, &slug)?;
+                    let editable = challenge::Spec::load(&root.join(&slug))?.paths.editable;
+                    println!(
+                        "{}",
+                        serde_json::json!({"entry": entry, "record_commit": rc, "editable": editable})
+                    );
+                    Ok(())
+                })
+        }
+        Command::Comment { gate, score, entry } => {
+            let load = |p: &PathBuf| pipeline::read_claim(p);
+            let gate = load(&gate);
+            let score = score.as_ref().map(load).transpose();
+            let entry = entry.as_ref().map(load).transpose();
+            match (gate, score, entry) {
+                (Ok(g), Ok(s), Ok(e)) => {
+                    print!(
+                        "{}",
+                        pipeline::comment(&g, s.as_ref(), e.as_ref().map(|e| &e["entry"]))
+                    );
+                    Ok(())
+                }
+                (Err(e), _, _) | (_, Err(e), _) | (_, _, Err(e)) => Err(e),
+            }
+        }
     };
     match result {
         Ok(()) => ExitCode::SUCCESS,
@@ -115,6 +266,11 @@ fn main() -> ExitCode {
             ExitCode::FAILURE
         }
     }
+}
+
+fn fail(msg: &str) -> ExitCode {
+    eprintln!("cb: {msg}");
+    ExitCode::FAILURE
 }
 
 fn stub(name: &str) -> Result<(), String> {

@@ -1,0 +1,59 @@
+# Posts the PR score and records the PR-stage attempt (the denominator:
+# rejected and slower attempts are kept). Runs from main on workflow_run,
+# so it never executes submission code; artifacts are untrusted data, parsed
+# and neutralised by cb. The PR number comes from the event, not an artifact.
+name: Comment
+
+on:
+  workflow_run:
+    workflows: [Submission]
+    types: [completed]
+
+permissions:
+  contents: write
+  pull-requests: write
+  actions: read
+
+concurrency:
+  group: results
+  cancel-in-progress: false
+
+jobs:
+  comment:
+    if: github.event.workflow_run.event == 'pull_request_target' && github.event.workflow_run.pull_requests[0].number
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: main
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          run-id: ${{ github.event.workflow_run.id }}
+          github-token: ${{ github.token }}
+          path: artifacts
+      - run: rustup toolchain install
+      - run: cargo build --locked --release
+      - name: Record the PR attempt and render the comment
+        run: |
+          gate=artifacts/gate/gate.json
+          score=artifacts/score/score.json
+          args=(--gate "$gate")
+          if [ "$(jq -r .ok "$gate")" = true ] && [ -f "$score" ]; then
+            slug=$(jq -r .slug "$gate")
+            ./target/release/cb record "$slug" --stage pr --run "$score" \
+              --commit "$HEAD_SHA" --by "$ACTOR" --at "$(date -u +%FT%TZ)" > entry.json
+            args+=(--score "$score" --entry entry.json)
+            git config user.name "cb-bot"
+            git config user.email "cb-bot@users.noreply.github.com"
+            git add "challenges/$slug/results.jsonl"
+            git commit -qm "results: PR #$PR attempt on $slug"
+            for i in 1 2 3; do git pull -q --rebase origin main && git push -q origin HEAD:main && break; sleep 5; done
+          fi
+          ./target/release/cb comment "${args[@]}" > body.md
+          gh pr comment "$PR" --body-file body.md
+        env:
+          PR: ${{ github.event.workflow_run.pull_requests[0].number }}
+          HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
+          ACTOR: ${{ github.event.workflow_run.actor.login }}
+          GH_TOKEN: ${{ github.token }}
