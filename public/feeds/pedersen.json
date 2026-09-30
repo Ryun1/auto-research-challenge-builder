@@ -1,9 +1,10 @@
 {
   "attempts_by_status": {
     "pr:rejected": 1,
-    "pr:valid_claim_better": 1
+    "pr:valid_claim_better": 1,
+    "promotion:promoted": 1
   },
-  "attempts_count": 2,
+  "attempts_count": 3,
   "bar": {
     "baseline": 1.0,
     "direction": "maximise",
@@ -13,11 +14,22 @@
     "statistic": "callgrind instruction ratio vs frozen reference; paired wall-time guard (mirrored blocks, rel-MAD)"
   },
   "benchmark": "pedersen",
-  "board": [],
+  "board": [
+    {
+      "at": "2026-09-30T19:09:05Z",
+      "commit": "61f0009e252edf3432a78377894ecfed5bfc0062",
+      "delta": 0.023730946073213133,
+      "delta_pct": 2.37,
+      "model": "",
+      "rank": 1,
+      "solver": "Ryun1",
+      "value": 1.0237309460732131
+    }
+  ],
   "challenge": "pedersen",
   "feed_schema_version": 1,
-  "fetched_at": "2026-09-30T19:00:51Z",
-  "generated_at": "2026-09-30T19:00:51Z",
+  "fetched_at": "2026-09-30T19:09:05Z",
+  "generated_at": "2026-09-30T19:09:05Z",
   "policy": {
     "allowed_paths": [
       "challenges/pedersen/candidate/src/**"
@@ -64,10 +76,10 @@
     "selection_basis": "PR gate: only editable paths change; no symlinks or gitlinks; size cap"
   },
   "record": {
-    "at": "2026-09-30T18:54:03Z",
+    "at": "2026-09-30T19:09:05Z",
     "by": "Ryun1",
     "unit": "speedup",
-    "value": 1.0
+    "value": 1.0237309460732131
   },
   "source": "builder",
   "truth_label": "promoted: two agreeing sandboxed runs on main, fresh seeds",
