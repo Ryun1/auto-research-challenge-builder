@@ -24,13 +24,13 @@ jobs:
             run: ./setup.sh && ./benchmark.sh
           - name: eip8200-modexp
             repo: Ryun1/eip8200-challenges
-            sha: 053bd05
+            sha: af1c673
             run: ./setup.sh modexp && ./benchmark.sh modexp
     steps:
       - name: Clone ${{ matrix.repo }}@${{ matrix.sha }}
         run: |
           git clone --filter=blob:none "https://github.com/${{ matrix.repo }}" target
-          git -C target checkout --detach "${{ matrix.sha }}"
+          git -C target checkout --detach "${{ matrix.sha }}^{commit}"
           git -C target rev-parse HEAD
       - name: Run under time + 60 min cap
         working-directory: target
