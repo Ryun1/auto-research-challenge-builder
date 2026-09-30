@@ -79,7 +79,7 @@ impl File {
             gates: self.gates.clone()?,
             scores: self.scores.clone(),
             laptop: self.laptop.clone(),
-            peaks: self.peaks,
+            peaks: self.peaks.clone(),
         })
     }
 }
@@ -383,7 +383,7 @@ mod tests {
                 s += &format!("[scores.{c}]\nvalue = {v}\nevidence = \"e\"\n");
             }
             s += "[laptop]\nevidence = \"m\"\napple = { produce = \"yes\", verify = \"yes\", score = \"yes-slow\" }\nx86 = { produce = \"yes\", verify = \"yes\", score = \"yes\" }\n";
-            s += "[peaks]\nminutes = 5.0\nram_gb = 1.0\ndisk_gb = 1.0\ngpu = false\n";
+            s += "[peaks]\nminutes = 5.0\nram_gb = 1.0\ndisk_gb = 1.0\ngpu = false\nevidence = \"ci\"\n";
             std::fs::write(dir.join(format!("{slug}.toml")), s).unwrap();
         };
         full("low", 2, true);

@@ -37,4 +37,5 @@ minutes = 4.0
 ram_gb = 1.5
 disk_gb = 3.0
 gpu = false
+evidence = "calibrate run 36713844990, ubuntu-24.04 2 vCPU"
 ```

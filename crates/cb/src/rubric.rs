@@ -94,13 +94,15 @@ pub struct Laptop {
 }
 
 /// Measured peaks of one verify+score run.
-#[derive(Clone, Copy, Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Peaks {
     pub minutes: f64,
     pub ram_gb: f64,
     pub disk_gb: f64,
     pub gpu: bool,
+    #[serde(default)]
+    pub evidence: String,
 }
 
 /// GitHub-hosted private runner: 2 vCPU / 8 GB / 14 GB disk, ≤60 min target.
@@ -109,6 +111,7 @@ pub const HOSTED: Peaks = Peaks {
     ram_gb: 8.0,
     disk_gb: 14.0,
     gpu: false,
+    evidence: String::new(),
 };
 
 #[derive(Clone, Debug)]
@@ -219,6 +222,12 @@ pub fn evaluate(c: &Candidate) -> Result<Evaluation, Vec<String>> {
     {
         errors.push("Laptop: missing evidence".into());
     }
+    if c.peaks
+        .as_ref()
+        .is_some_and(|p| p.evidence.trim().is_empty())
+    {
+        errors.push("Peaks: missing evidence".into());
+    }
 
     let mut weighted = 0;
     let mut missing = false;
@@ -300,6 +309,7 @@ mod tests {
                 ram_gb: 1.0,
                 disk_gb: 2.0,
                 gpu: false,
+                evidence: "ci".into(),
             }),
         }
     }
@@ -399,6 +409,10 @@ mod tests {
             },
         );
         assert!(evaluate(&c).is_err());
+
+        let mut c = candidate(3);
+        c.peaks.as_mut().unwrap().evidence.clear();
+        assert_eq!(evaluate(&c).unwrap_err(), vec!["Peaks: missing evidence"]);
     }
 
     #[test]
@@ -418,6 +432,7 @@ mod tests {
                 ram_gb,
                 disk_gb,
                 gpu,
+                evidence: String::new(),
             })
         };
         assert!(p(60.0, 8.0, 14.0, false));

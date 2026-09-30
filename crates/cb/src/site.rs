@@ -140,12 +140,13 @@ fn measured(out: &mut String, r: &Row) {
     if let Some(p) = &r.file.peaks {
         let _ = write!(
             out,
-            "<p>Peaks: {} min, {} GB RAM, {} GB disk, GPU {}. Hostable here: <b>{}</b>.</p>",
+            "<p>Peaks: {} min, {} GB RAM, {} GB disk, GPU {}. Hostable here: <b>{}</b>. {}</p>",
             p.minutes,
             p.ram_gb,
             p.disk_gb,
             if p.gpu { "yes" } else { "no" },
             opt(r.hostable.map(|h| if h { "yes" } else { "no" })),
+            evidence(&p.evidence),
         );
     }
 }
