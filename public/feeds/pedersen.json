@@ -1,10 +1,10 @@
 {
   "attempts_by_status": {
-    "pr:rejected": 1,
+    "pr:rejected": 2,
     "pr:valid_claim_better": 1,
     "promotion:promoted": 1
   },
-  "attempts_count": 3,
+  "attempts_count": 4,
   "bar": {
     "baseline": 1.0,
     "direction": "maximise",
@@ -28,8 +28,8 @@
   ],
   "challenge": "pedersen",
   "feed_schema_version": 1,
-  "fetched_at": "2026-09-30T19:09:05Z",
-  "generated_at": "2026-09-30T19:09:05Z",
+  "fetched_at": "2026-09-30T19:31:44Z",
+  "generated_at": "2026-09-30T19:31:44Z",
   "policy": {
     "allowed_paths": [
       "challenges/pedersen/candidate/src/**"
