@@ -1,0 +1,61 @@
+{
+  "attempts_by_status": {
+    "pr:valid_claim_better": 1,
+    "pr:valid_not_promoted": 1,
+    "promotion:promoted": 1,
+    "promotion:valid_not_promoted": 1
+  },
+  "attempts_count": 4,
+  "bar": {
+    "baseline": 181.0,
+    "direction": "minimise",
+    "metric": "length",
+    "min_improvement_bips": 0,
+    "pairing": "two independent runs on main must agree within half the bar",
+    "statistic": "exact: certificate checked as data"
+  },
+  "benchmark": "golomb-14",
+  "board": [
+    {
+      "at": "2026-09-30T15:46:42Z",
+      "commit": "ccc47418cbd4fa553dc562428ac7c61e673653b7",
+      "delta": -54.0,
+      "delta_pct": -29.83,
+      "model": "",
+      "rank": 1,
+      "solver": "Ryun1",
+      "value": 127.0
+    }
+  ],
+  "challenge": "golomb-14",
+  "feed_schema_version": 1,
+  "fetched_at": "2026-09-30T16:42:43Z",
+  "generated_at": "2026-09-30T16:42:43Z",
+  "policy": {
+    "editable": [
+      "candidate/"
+    ],
+    "forbidden": [
+      "everything outside editable",
+      "symlinks",
+      "gitlinks",
+      "> 4096 bytes"
+    ],
+    "measurement": {
+      "perf": null,
+      "runner": "ubuntu-24.04",
+      "rust_allow": null,
+      "salted_inputs": false
+    },
+    "runner_fingerprint": "github-actions Linux 20260927.320.1; linux x86_64; AMD EPYC 9V74 80-Core Processor; 2 cpus"
+  },
+  "record": {
+    "at": "2026-09-30T15:46:42Z",
+    "by": "Ryun1",
+    "unit": "length",
+    "value": 127.0
+  },
+  "source": "builder",
+  "truth_label": "promoted: two agreeing sandboxed runs on main, fresh seeds",
+  "url": "https://raw.githubusercontent.com/Ryun1/auto-research-challenge-builder/main/public/feeds/golomb-14.json"
+}

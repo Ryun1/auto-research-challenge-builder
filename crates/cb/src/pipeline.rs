@@ -547,7 +547,7 @@ pub fn comment(gate: &Value, claim: Option<&Value>, entry: Option<&Value>) -> St
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
     use crate::challenge::scaffold;
 

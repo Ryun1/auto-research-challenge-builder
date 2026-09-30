@@ -4,6 +4,7 @@ use std::process::ExitCode;
 
 mod candidate;
 mod challenge;
+mod feed;
 mod paths;
 mod pipeline;
 mod policy;
@@ -131,8 +132,19 @@ enum Command {
         #[arg(long)]
         entry: Option<PathBuf>,
     },
-    /// Write per-challenge feed JSON (toolkit Snapshot)
-    Feed,
+    /// Write per-challenge feed JSON (toolkit Snapshot fields) + public leaderboard
+    Feed {
+        #[arg(long, default_value = "challenges")]
+        root: PathBuf,
+        #[arg(long, default_value = "target/public")]
+        out: PathBuf,
+        /// Where <out> is served (feed URLs are built from it)
+        #[arg(long)]
+        base_url: String,
+        /// UTC timestamp, e.g. $(date -u +%FT%TZ)
+        #[arg(long)]
+        at: String,
+    },
     /// Score candidates against the rubric
     Rank {
         #[arg(long, default_value = "candidates")]
@@ -168,7 +180,19 @@ fn main() -> ExitCode {
         Command::Site { dir, out } => {
             site::build(&dir, &out).map(|p| println!("wrote {} (internal only)", p.display()))
         }
-        Command::Feed => stub("feed"),
+        Command::Feed {
+            root,
+            out,
+            base_url,
+            at,
+        } => feed::build(&root, &out, &base_url, &at).map(|slugs| {
+            println!(
+                "wrote {} feed(s) + index.html to {}: {}",
+                slugs.len(),
+                out.display(),
+                slugs.join(", ")
+            )
+        }),
         Command::Gate {
             base,
             head,
@@ -271,10 +295,6 @@ fn main() -> ExitCode {
 fn fail(msg: &str) -> ExitCode {
     eprintln!("cb: {msg}");
     ExitCode::FAILURE
-}
-
-fn stub(name: &str) -> Result<(), String> {
-    Err(format!("{name}: not implemented yet"))
 }
 
 /// Writes one draft per track; never overwrites an existing candidate.

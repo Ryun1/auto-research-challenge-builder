@@ -116,6 +116,8 @@ jobs:
           git config user.name "cb-bot"
           git config user.email "cb-bot@users.noreply.github.com"
           git add "challenges/$SLUG/results.jsonl"
+          ./target/release/cb feed --out public --base-url "$FEED_BASE" --at "$(date -u +%FT%TZ)"
+          git add public
           msg="results: $SLUG $STAGE $status (${SHA::7})"
           if [ "$STAGE" = promotion ] && [ "$status" != promoted ]; then
             rc=$(jq -r .record_commit decision.json)
@@ -127,6 +129,8 @@ jobs:
           git commit -qam "$msg"
           for i in 1 2 3; do git pull -q --rebase origin main && git push -q origin HEAD:main && break; sleep 5; done
         env:
+          # Public feed location. Private repo on the Free plan: no Pages, raw URLs need a token.
+          FEED_BASE: https://raw.githubusercontent.com/${{ github.repository }}/main/public
           SLUG: ${{ needs.detect.outputs.slug }}
           STAGE: ${{ needs.detect.outputs.stage }}
           SHA: ${{ github.sha }}
