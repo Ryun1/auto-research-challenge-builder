@@ -17,7 +17,7 @@ declare -a CASES=(
   "lockfile-edit|refused|Cargo.lock: outside the editable paths|echo '# pwn' >> $P/Cargo.lock"
   "size-cap|refused|max bytes|head -c 5000 /dev/zero | tr '\\\\0' 7 > $G/candidate/ruler.txt"
   "read-seed-and-reference|refused|not allowed: environment|printf '\\npub fn leak() -> String { std::env::var(\"CB_SEED\").unwrap_or_default() + &std::fs::read_to_string(\"../reference/src/lib.rs\").unwrap_or_default() }\\n' >> $P/candidate/src/lib.rs"
-  "wrong-answer|rejected|verify failed|sed -i.bak 's/    hash(&x, &y).to_bytes_be()/    let mut o = hash(\\&x, \\&y).to_bytes_be(); o[0] ^= 1; o/' $P/candidate/src/lib.rs && rm $P/candidate/src/lib.rs.bak"
+  "wrong-answer|rejected|verify failed|sed -i.bak 's/    acc.to_affine().x().to_bytes_be()/    let mut o = acc.to_affine().x().to_bytes_be(); o[0] ^= 1; o/' $P/candidate/src/lib.rs && rm $P/candidate/src/lib.rs.bak && grep -qF 'o[0] ^= 1' $P/candidate/src/lib.rs"
 )
 
 want=("$@")
