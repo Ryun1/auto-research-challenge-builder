@@ -3,6 +3,7 @@ use std::path::PathBuf;
 use std::process::ExitCode;
 
 mod paths;
+mod rubric;
 
 /// Challenge builder: evaluate candidate problems, build and run challenges.
 #[derive(Parser)]
