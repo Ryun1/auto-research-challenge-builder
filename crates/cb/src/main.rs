@@ -5,6 +5,7 @@ use std::process::ExitCode;
 mod candidate;
 mod paths;
 mod rubric;
+mod site;
 
 /// Challenge builder: evaluate candidate problems, build and run challenges.
 #[derive(Parser)]
@@ -47,8 +48,13 @@ enum Command {
         #[arg(long, default_value = "candidates")]
         out: PathBuf,
     },
-    /// Render the static ranking and leaderboard site
-    Site,
+    /// Render the candidate ranking to one HTML page (internal, AMBER: never deploy)
+    Site {
+        #[arg(long, default_value = "candidates")]
+        dir: PathBuf,
+        #[arg(long, default_value = "target/site")]
+        out: PathBuf,
+    },
     /// Write per-challenge feed JSON (toolkit Snapshot)
     Feed,
     /// Score candidates against the rubric
@@ -68,7 +74,9 @@ fn main() -> ExitCode {
         Command::Rank { dir } => candidate::rank(&dir).map(|table| print!("{table}")),
         Command::New { .. } => stub("new"),
         Command::Preflight { .. } => stub("preflight"),
-        Command::Site => stub("site"),
+        Command::Site { dir, out } => {
+            site::build(&dir, &out).map(|p| println!("wrote {} (internal only)", p.display()))
+        }
         Command::Feed => stub("feed"),
     };
     match result {

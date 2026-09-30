@@ -21,7 +21,6 @@ pub struct File {
 
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
-#[allow(dead_code)] // title, description, url... are rendered by `cb site` (#5)
 pub struct Meta {
     pub slug: String,
     pub title: String,
@@ -180,8 +179,19 @@ pub fn import(json: &str, url: &str) -> Result<Vec<(String, String)>, String> {
 
 // ---- cb rank ----
 
-/// Loads every `*.toml` in `dir` and renders the ranking.
-pub fn rank(dir: &Path) -> Result<String, String> {
+pub struct Row {
+    pub file: File,
+    /// ranked | unmeasured | rejected | incomplete | draft
+    pub status: &'static str,
+    pub total: Option<f64>,
+    pub laptop: Option<u8>,
+    pub hostable: Option<bool>,
+    /// Rejection reasons, input errors, or laptop suggestions.
+    pub notes: Vec<String>,
+}
+
+/// Loads and evaluates every `*.toml` in `dir`: ranked by total, the rest by slug.
+pub fn rows(dir: &Path) -> Result<Vec<Row>, String> {
     let mut paths: Vec<_> = std::fs::read_dir(dir)
         .map_err(|e| format!("{}: {e}", dir.display()))?
         .filter_map(|e| e.ok().map(|e| e.path()))
@@ -191,47 +201,44 @@ pub fn rank(dir: &Path) -> Result<String, String> {
     let mut rows = Vec::new();
     for path in &paths {
         let file = File::load(path)?;
+        let row = |status, total, laptop, hostable, notes| (status, total, laptop, hostable, notes);
         let (status, total, laptop, hostable, notes) =
             match file.rubric().map(|c| rubric::evaluate(&c)) {
-                None => (
-                    "draft".to_string(),
-                    None,
-                    None,
-                    None,
-                    vec!["gates not assessed".to_string()],
-                ),
-                Some(Err(errors)) => ("incomplete".into(), None, None, None, errors),
-                Some(Ok(e)) if !e.rejected.is_empty() => (
-                    "rejected".into(),
-                    None,
-                    e.laptop_score,
-                    e.hostable,
-                    e.rejected,
-                ),
+                None => row("draft", None, None, None, vec!["gates not assessed".into()]),
+                Some(Err(errors)) => row("incomplete", None, None, None, errors),
+                Some(Ok(e)) if !e.rejected.is_empty() => {
+                    row("rejected", None, e.laptop_score, e.hostable, e.rejected)
+                }
                 Some(Ok(e)) => {
                     let status = if e.total.is_some() {
                         "ranked"
                     } else {
                         "unmeasured"
                     };
-                    (
-                        status.into(),
-                        e.total,
-                        e.laptop_score,
-                        e.hostable,
-                        e.suggestions,
-                    )
+                    row(status, e.total, e.laptop_score, e.hostable, e.suggestions)
                 }
             };
-        rows.push((file.candidate, status, total, laptop, hostable, notes));
+        rows.push(Row {
+            file,
+            status,
+            total,
+            laptop,
+            hostable,
+            notes,
+        });
     }
-    // Ranked by total, then everything else by slug.
     rows.sort_by(|a, b| {
-        b.2.partial_cmp(&a.2)
+        b.total
+            .partial_cmp(&a.total)
             .unwrap()
-            .then_with(|| a.0.slug.cmp(&b.0.slug))
+            .then_with(|| a.file.candidate.slug.cmp(&b.file.candidate.slug))
     });
+    Ok(rows)
+}
 
+/// The ranking as a text table, then notes per candidate.
+pub fn rank(dir: &Path) -> Result<String, String> {
+    let rows = rows(dir)?;
     let opt = |v: Option<String>| v.unwrap_or_else(|| "-".into());
     let mut out = format!("rubric v{}\n", rubric::RUBRIC_VERSION);
     let _ = writeln!(
@@ -239,27 +246,28 @@ pub fn rank(dir: &Path) -> Result<String, String> {
         "{:<4} {:<40} {:<9} {:>6} {:>6} {:>8}  status",
         "#", "slug", "family", "total", "laptop", "hostable"
     );
-    for (i, (meta, status, total, laptop, hostable, _)) in rows.iter().enumerate() {
-        let rank = if total.is_some() {
+    for (i, r) in rows.iter().enumerate() {
+        let rank = if r.total.is_some() {
             (i + 1).to_string()
         } else {
             "-".into()
         };
-        let hostable = hostable.map(|h| if h { "yes" } else { "no" }.to_string());
+        let hostable = r.hostable.map(|h| if h { "yes" } else { "no" }.to_string());
         let _ = writeln!(
             out,
-            "{rank:<4} {:<40} {:<9} {:>6} {:>6} {:>8}  {status}",
-            meta.slug,
-            meta.family,
-            opt(total.map(|t| format!("{t:.1}"))),
-            opt(laptop.map(|l| l.to_string())),
+            "{rank:<4} {:<40} {:<9} {:>6} {:>6} {:>8}  {}",
+            r.file.candidate.slug,
+            r.file.candidate.family,
+            opt(r.total.map(|t| format!("{t:.1}"))),
+            opt(r.laptop.map(|l| l.to_string())),
             opt(hostable),
+            r.status,
         );
     }
-    for (meta, status, _, _, _, notes) in &rows {
-        if !notes.is_empty() {
-            let _ = writeln!(out, "\n{} ({status}):", meta.slug);
-            for n in notes {
+    for r in &rows {
+        if !r.notes.is_empty() {
+            let _ = writeln!(out, "\n{} ({}):", r.file.candidate.slug, r.status);
+            for n in &r.notes {
                 let _ = writeln!(out, "  - {n}");
             }
         }
