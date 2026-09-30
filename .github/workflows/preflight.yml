@@ -26,8 +26,13 @@ jobs:
         with:
           persist-credentials: false
       - run: rustup toolchain install
+      - if: runner.os == 'Linux'
+        run: sudo apt-get install -y -qq valgrind # Rust kit scoring
       - run: cargo build --locked --release
       - name: cb preflight
+        # The Linux runner is the gate. macOS is a laptop-class report
+        # (e.g. callgrind scoring is "no" there by design), so it never fails the run.
+        continue-on-error: ${{ runner.os == 'macOS' }}
         run: ./target/release/cb preflight "$SLUG" --out preflight-out
         env:
           SLUG: ${{ inputs.slug }}

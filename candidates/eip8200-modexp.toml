@@ -1,0 +1,74 @@
+# Calibration set (#6). Measured 2026-09-30.
+[candidate]
+slug = "eip8200-modexp"
+title = "EIP-8200: Lean-verified MODEXP precompile, minimise gas"
+family = "proof"
+direction = "minimise"
+category = "lean"
+url = "https://github.com/Ryun1/eip8200-challenges"
+editable = ["Challenge/Modexp/Submission"]
+max_bytes = 8388608
+
+[gates.verifiable]
+pass = true
+evidence = "Lean proof against the spec, banned axioms, plus executable test vectors (Scorer.lean)"
+
+[gates.scalar_objective]
+pass = true
+evidence = "measured EVM gas, direction -"
+
+[gates.bounded]
+pass = true
+evidence = "self-hosted runner; the first build is over 1 h on an M5 laptop, so G3 (6 h) holds"
+
+[gates.baseline]
+pass = true
+evidence = "bundled Reference/ artifact (README)"
+
+[scores.expert_scarcity]
+value = 4
+evidence = "Lean 4 + EVM bytecode proofs: a rare combination"
+
+[scores.headroom]
+value = 3
+evidence = "gas for a verified MODEXP replacement: no published bound"
+
+[scores.eval_cost]
+value = 1
+evidence = "first setup+benchmark over 60 min on an M5 (timed out, measured); Mathlib build"
+
+[scores.noise]
+value = 5
+evidence = "deterministic gas from concrete execution"
+
+[scores.gaming_resistance]
+value = 4
+evidence = "machine-checked proof + banned axioms + test vectors; independent gas cross-check (README)"
+
+[scores.fidelity]
+value = 4
+evidence = "gas measured by concrete EVM execution, cross-checked"
+
+[scores.value]
+value = 3
+evidence = "Ethereum precompile work; indirect for Starknet"
+
+[scores.decomposability]
+value = 4
+evidence = "gas wins come as many local rewrites, each re-proved"
+
+[scores.prior_art]
+value = 3
+evidence = "Lean/Mathlib docs; EVM-in-Lean semantics are niche"
+
+[laptop]
+evidence = "Apple M5 32 GB: ./setup.sh modexp && ./benchmark.sh modexp timed out at 60 min (serial Lean build, 8.35 GB build output; measured 2026-09-30). x86 not measured (the CI runner ran out of disk); assumed the same, since the build is serial Lean"
+apple = { produce = "no", verify = "no", score = "no" }
+x86 = { produce = "no", verify = "no", score = "no" }
+
+[peaks]
+minutes = 60.0
+ram_gb = 4.0
+disk_gb = 15.0
+gpu = false
+evidence = "ubuntu-24.04 ran out of disk (~14 GB free) after 4 min (calibrate run 36713844990); M5 timed out at 60 min. Lower bounds, not peaks"

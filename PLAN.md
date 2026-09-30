@@ -98,7 +98,7 @@ an existing Yukon-style repo (direction, editable surface, category).
   host it.
 - **G4 Baseline exists** and passes the verifier.
 
-### Scored criteria (1–5; total = Σ w·s / Σ w·5 × 100; weights are v0)
+### Scored criteria (1–5; total = Σ w·s / Σ w·5 × 100; weights are v1, see docs/calibration.md)
 
 | Criterion | W | 5 looks like | 1 looks like |
 |---|---|---|---|
@@ -109,7 +109,7 @@ an existing Yukon-style repo (direction, editable surface, category).
 | Noise vs threshold | 2 | deterministic count, or noise ≪ min improvement | noise ≈ min improvement |
 | Gaming resistance | 2 | submission is data checked by a certificate/proof, or bit-exact on fresh inputs | participant code runs in the judge; fixed test set |
 | Fidelity | 2 | benchmark = real use | proxy that diverges from deployment |
-| Value | 2 | a win ships (Starknet or broadly) | curiosity only |
+| Value | 3 | a win ships (Starknet or broadly) | curiosity only |
 | Decomposability | 1 | many small independent steps | one big leap or nothing |
 | Prior art / guides | 1 | papers + code agents can read | tribal knowledge only |
 

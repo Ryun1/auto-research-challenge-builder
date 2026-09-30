@@ -1,4 +1,4 @@
-# First challenge (PLAN.md §7b). Measured 2026-09-30 on Apple M5 (local).
+# First challenge (PLAN.md §7b), challenges/pedersen. Measured 2026-09-30.
 [candidate]
 slug = "pedersen"
 title = "Pedersen hash on the STARK curve (cairo-vm builtin path)"
@@ -61,6 +61,13 @@ value = 4
 evidence = "EC literature + lambdaworks/starknet-ff source"
 
 [laptop]
-evidence = "planned kit (PLAN.md §7a): verify native anywhere; score needs Valgrind (Linux), Mac via Docker with arm64 counts. Re-measure when #10 lands"
+evidence = "preflight runs 36720591383 (macos-15 M1, ubuntu-24.04 2 vCPU) + local M5: produce/verify yes (verify 4-5 s). Score needs valgrind: native on Linux (CI preflight passes), Mac via bench/run-docker (not yet exercised)"
 apple = { produce = "yes", verify = "yes", score = "yes-slow" }
 x86 = { produce = "yes", verify = "yes", score = "yes" }
+
+[peaks]
+minutes = 0.1
+ram_gb = 0.56
+disk_gb = 0.1
+gpu = false
+evidence = "preflight run 36720591383, ubuntu-24.04: verify+score 0.07 min, 0.56 GB max process RSS"

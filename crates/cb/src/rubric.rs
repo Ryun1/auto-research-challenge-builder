@@ -1,4 +1,4 @@
-//! Rubric v0 (PLAN.md §1): hard gates, then weighted 1–5 criteria.
+//! Rubric (PLAN.md §1): hard gates, then weighted 1–5 criteria.
 //!
 //! Laptop validation and "hostable here" are derived from measurements,
 //! never entered as scores.
@@ -6,7 +6,8 @@
 use serde::Deserialize;
 use std::collections::BTreeMap;
 
-pub const RUBRIC_VERSION: u32 = 0;
+/// v1 (2026-09-30, #6 calibration): Value 2 → 3.
+pub const RUBRIC_VERSION: u32 = 1;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -23,7 +24,7 @@ pub enum Criterion {
     PriorArt,
 }
 
-/// v0 weights, in plan order. Laptop is derived (see [`laptop_score`]).
+/// v1 weights, in plan order. Laptop is derived (see [`laptop_score`]).
 pub const WEIGHTS: [(Criterion, u32); 10] = [
     (Criterion::ExpertScarcity, 3),
     (Criterion::Headroom, 2),
@@ -32,7 +33,7 @@ pub const WEIGHTS: [(Criterion, u32); 10] = [
     (Criterion::Noise, 2),
     (Criterion::GamingResistance, 2),
     (Criterion::Fidelity, 2),
-    (Criterion::Value, 2),
+    (Criterion::Value, 3),
     (Criterion::Decomposability, 1),
     (Criterion::PriorArt, 1),
 ];
@@ -318,7 +319,7 @@ mod tests {
     #[test]
     fn weights_match_plan() {
         let total: u32 = WEIGHTS.iter().map(|(_, w)| w).sum();
-        assert_eq!(total, 19);
+        assert_eq!(total, 20);
     }
 
     #[test]
@@ -341,7 +342,7 @@ mod tests {
             x86: no,
             evidence: "GPU only".into(),
         });
-        // Every criterion at 1 → 19·1 / 95 = 20.
+        // Every criterion at 1 → 20·1 / 100 = 20.
         assert_eq!(evaluate(&c).unwrap().total, Some(20.0));
     }
 
