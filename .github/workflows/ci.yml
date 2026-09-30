@@ -28,6 +28,7 @@ jobs:
       - run: cargo test --locked
         env:
           CB_REQUIRE_VALGRIND: '1'
+          CB_REQUIRE_SANDBOX: '1'
       - run: cargo test --locked --release --manifest-path kits/rust/Cargo.toml
       - name: cb preflight every challenge
         run: |

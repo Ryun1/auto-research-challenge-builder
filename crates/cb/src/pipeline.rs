@@ -727,6 +727,33 @@ mod tests {
         );
     }
 
+    /// Runtime containment (#13). Linux CI only (needs sudo, unshare, setpriv);
+    /// CI sets CB_REQUIRE_SANDBOX so it can't silently skip.
+    #[test]
+    fn sandbox_contains_the_candidate() {
+        if std::env::var_os("CB_REQUIRE_SANDBOX").is_none() {
+            eprintln!("skipped: set CB_REQUIRE_SANDBOX on a Linux runner");
+            return;
+        }
+        let ws = paths::scratch("sandbox");
+        std::fs::create_dir_all(&ws).unwrap();
+        std::fs::write(ws.join("secret"), "judge-only").unwrap();
+        let _ = Command::new("chmod").args(["-R", "a+rX"]).arg(&ws).status();
+        let env = vec![("CB_PERF_BLOCKS".to_string(), "4".to_string())];
+        let sh = |cmd: &str| run_in(true, &env, &ws, cmd, 42);
+        assert_eq!(sh("id -u").stdout.trim(), "65534");
+        assert_eq!(sh("echo $CB_SEED $CB_PERF_BLOCKS").stdout.trim(), "42 4");
+        assert!(!sh("echo pwn > score.json").ok, "wrote into the workspace");
+        assert!(!sh("echo pwn >> secret").ok, "modified a judge file");
+        assert!(!sh("exec 3<>/dev/tcp/1.1.1.1/53").ok, "reached the network");
+        assert!(!sh("sudo -n true").ok, "escalated with sudo");
+        let envs = sh("env").stdout;
+        assert!(
+            !envs.contains("TOKEN") && !envs.contains("ACTIONS_") && !envs.contains("GITHUB_"),
+            "{envs}"
+        );
+    }
+
     #[test]
     fn comment_neutralises_untrusted_text() {
         let gate = json!({"ok": true, "slug": "toy"});
