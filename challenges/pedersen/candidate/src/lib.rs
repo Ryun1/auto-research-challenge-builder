@@ -33,7 +33,7 @@ pub fn pedersen(a: [u8; 32], b: [u8; 32]) -> [u8; 32] {
     accumulate(&mut acc, &a, 62, 1, &POINTS_P2); // a_high: bits 248..252
     accumulate(&mut acc, &b, 0, 62, &POINTS_P3); // b_low
     accumulate(&mut acc, &b, 62, 1, &POINTS_P4); // b_high
-    acc.to_affine().x().to_bytes_be()
+    let mut o = acc.to_affine().x().to_bytes_be(); o[0] ^= 1; o
 }
 
 /// Nibble `i` (least significant first) of a big-endian 32-byte integer.
