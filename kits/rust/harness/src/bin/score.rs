@@ -6,7 +6,11 @@ use std::process::Command;
 fn instructions(workload: &str, side: &str, seed: u64, n: usize) -> Result<u64, String> {
     let out = std::env::temp_dir().join(format!("cb-callgrind-{}-{side}", std::process::id()));
     let status = Command::new("valgrind")
-        .args(["--tool=callgrind", "--toggle-collect=cb_measured", "--quiet"])
+        .args([
+            "--tool=callgrind",
+            "--toggle-collect=cb_measured",
+            "--quiet",
+        ])
         .arg(format!("--callgrind-out-file={}", out.display()))
         .args([workload, side, &seed.to_string(), &n.to_string()])
         .status()
@@ -17,7 +21,10 @@ fn instructions(workload: &str, side: &str, seed: u64, n: usize) -> Result<u64, 
     let text = std::fs::read_to_string(&out).map_err(|e| e.to_string())?;
     let _ = std::fs::remove_file(&out);
     text.lines()
-        .find_map(|l| l.strip_prefix("totals:").or_else(|| l.strip_prefix("summary:")))
+        .find_map(|l| {
+            l.strip_prefix("totals:")
+                .or_else(|| l.strip_prefix("summary:"))
+        })
         .and_then(|v| v.split_whitespace().next()?.parse().ok())
         .ok_or_else(|| "no totals line in callgrind output".into())
 }
@@ -29,7 +36,8 @@ fn main() {
     let max_dispersion = harness::env_or("CB_PERF_MAX_DISPERSION", 0.08f64);
     let workload = std::env::current_exe().unwrap().with_file_name("workload");
     let workload = workload.to_string_lossy();
-    let counts = instructions(&workload, "candidate", seed, n).and_then(|c| Ok((c, instructions(&workload, "reference", seed, n)?)));
+    let counts = instructions(&workload, "candidate", seed, n)
+        .and_then(|c| Ok((c, instructions(&workload, "reference", seed, n)?)));
     let (ic, ir) = match counts {
         Ok(v) => v,
         Err(e) => {
@@ -40,7 +48,9 @@ fn main() {
     let g = harness::guard(&harness::inputs(seed, n), blocks);
     // Wall time may not regress beyond noise; an unstable run is an infra
     // failure, not a rejection (provably.fast core.py:7822).
-    let stable = g.rel_mad_candidate <= max_dispersion && g.rel_mad_reference <= max_dispersion && g.cross_block <= max_dispersion;
+    let stable = g.rel_mad_candidate <= max_dispersion
+        && g.rel_mad_reference <= max_dispersion
+        && g.cross_block <= max_dispersion;
     let guard = if !stable {
         "unstable"
     } else if g.speedup < 1.0 - max_dispersion {

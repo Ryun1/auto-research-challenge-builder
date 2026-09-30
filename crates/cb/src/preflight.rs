@@ -711,6 +711,10 @@ mod tests {
             assert!(!r.blocked(), "{text}");
             assert_eq!(status(&r, "A/A band"), Status::Pass, "{text}"); // instruction ratio is exactly 1
         } else {
+            assert!(
+                std::env::var_os("CB_REQUIRE_VALGRIND").is_none(),
+                "CI requires valgrind"
+            );
             eprintln!("valgrind not found: skipped score checks\n{text}");
         }
     }

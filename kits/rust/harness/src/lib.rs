@@ -36,11 +36,17 @@ impl Rng {
 }
 
 pub fn seed_from_env() -> u64 {
-    std::env::var("CB_SEED").ok().and_then(|s| s.parse().ok()).expect("CB_SEED must be set by the harness")
+    std::env::var("CB_SEED")
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .expect("CB_SEED must be set by the harness")
 }
 
 pub fn env_or<T: std::str::FromStr>(key: &str, default: T) -> T {
-    std::env::var(key).ok().and_then(|s| s.parse().ok()).unwrap_or(default)
+    std::env::var(key)
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(default)
 }
 
 fn hex(b: &[u8]) -> String {
@@ -52,14 +58,22 @@ fn hex(b: &[u8]) -> String {
 pub fn verify(seed: u64, n: usize) -> Result<usize, String> {
     let oracles = iface::oracles();
     let mut rng = Rng::new(seed);
-    let inputs = iface::edge_cases().into_iter().map(|x| ("edge", x)).chain((0..n).map(|_| ("salted", iface::sample(&mut rng))));
+    let inputs = iface::edge_cases()
+        .into_iter()
+        .map(|x| ("edge", x))
+        .chain((0..n).map(|_| ("salted", iface::sample(&mut rng))));
     let mut checked = 0;
     for (i, (kind, x)) in inputs.enumerate() {
         let got = iface::candidate(&x);
         for (name, oracle) in &oracles {
             let want = oracle(&x);
             if got != want {
-                return Err(format!("{kind} input #{i} (seed {seed}): {} -> candidate {} != {name} {}", hex(&x), hex(&got), hex(&want)));
+                return Err(format!(
+                    "{kind} input #{i} (seed {seed}): {} -> candidate {} != {name} {}",
+                    hex(&x),
+                    hex(&got),
+                    hex(&want)
+                ));
             }
         }
         checked += 1;
@@ -77,7 +91,11 @@ pub fn inputs(seed: u64, n: usize) -> Vec<[u8; iface::IN]> {
 #[inline(never)]
 #[no_mangle]
 pub fn cb_measured(candidate: bool, inputs: &[[u8; iface::IN]]) -> u64 {
-    let f = if candidate { iface::candidate } else { iface::reference };
+    let f = if candidate {
+        iface::candidate
+    } else {
+        iface::reference
+    };
     let mut acc = 0u64;
     for x in inputs {
         let out = f(black_box(x));
@@ -125,11 +143,19 @@ pub fn guard(inputs: &[[u8; iface::IN]], blocks: usize) -> Guard {
     time(false);
     let (mut all_b, mut all_c, mut ratios) = (Vec::new(), Vec::new(), Vec::new());
     for k in 0..blocks {
-        let order = if k % 4 == 0 || k % 4 == 3 { [false, true, true, false] } else { [true, false, false, true] };
+        let order = if k % 4 == 0 || k % 4 == 3 {
+            [false, true, true, false]
+        } else {
+            [true, false, false, true]
+        };
         let (mut b, mut c) = (Vec::new(), Vec::new());
         for cand in order {
             let t = time(cand);
-            if cand { c.push(t) } else { b.push(t) }
+            if cand {
+                c.push(t)
+            } else {
+                b.push(t)
+            }
         }
         ratios.push(median(&c) / median(&b));
         all_b.extend(b);
@@ -141,7 +167,10 @@ pub fn guard(inputs: &[[u8; iface::IN]], blocks: usize) -> Guard {
         speedup: 1.0 / g,
         rel_mad_candidate: rel_mad(&all_c),
         rel_mad_reference: rel_mad(&all_b),
-        cross_block: ratios.iter().map(|r| (r / g - 1.0).abs()).fold(0.0, f64::max),
+        cross_block: ratios
+            .iter()
+            .map(|r| (r / g - 1.0).abs())
+            .fold(0.0, f64::max),
     }
 }
 
