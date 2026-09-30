@@ -34,11 +34,16 @@ jobs:
           persist-credentials: false
       - name: Fetch the PR head as objects only (never checked out)
         run: |
-          git fetch --no-tags https://github.com/${{ github.repository }} "+refs/pull/${PR}/head:refs/cb/head"
+          # Read-only token, for this fetch only (private repo). This job never
+          # runs submission code.
+          auth=$(printf 'x-access-token:%s' "$TOKEN" | base64 -w0)
+          git -c "http.https://github.com/.extraheader=AUTHORIZATION: basic $auth" \
+            fetch --no-tags "https://github.com/${{ github.repository }}" "+refs/pull/${PR}/head:refs/cb/head"
           test "$(git rev-parse refs/cb/head)" = "$HEAD_SHA"
         env:
           PR: ${{ github.event.pull_request.number }}
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          TOKEN: ${{ github.token }}
       - run: rustup toolchain install
       - run: cargo build --locked --release
       - id: gate

@@ -38,6 +38,10 @@ jobs:
         run: |
           gate=artifacts/gate/gate.json
           score=artifacts/score/score.json
+          if [ ! -f "$gate" ]; then
+            gate=gate-missing.json
+            echo '{"ok": false, "errors": ["the gate job failed before deciding; see the Submission run"]}' > "$gate"
+          fi
           args=(--gate "$gate")
           if [ "$(jq -r .ok "$gate")" = true ] && [ -f "$score" ]; then
             slug=$(jq -r .slug "$gate")
