@@ -235,6 +235,20 @@ fn du_bytes(dir: &Path) -> u64 {
         .unwrap_or(0)
 }
 
+/// Sum of file lengths under `dir` (the size cap counts bytes, not disk blocks).
+pub fn tree_bytes(dir: &Path) -> u64 {
+    std::fs::read_dir(dir)
+        .into_iter()
+        .flatten()
+        .flatten()
+        .map(|e| match e.file_type() {
+            Ok(t) if t.is_dir() => tree_bytes(&e.path()),
+            Ok(t) if t.is_file() => e.metadata().map(|m| m.len()).unwrap_or(0),
+            _ => 0,
+        })
+        .sum()
+}
+
 /// Copies the challenge to a scratch dir with `with` in place of the editable surface.
 fn workspace(dir: &Path, editable: &str, with: &Path, tag: &str) -> Result<PathBuf, String> {
     let ws = crate::paths::scratch(&format!("preflight-{tag}"));
@@ -360,7 +374,7 @@ pub fn run_all(dir: &Path) -> Result<Report, String> {
             Err(e) => r.push("rust policy", Status::Fail, e.join("; ")),
         }
     }
-    let size = du_bytes(&dir.join("baseline"));
+    let size = tree_bytes(&dir.join("baseline"));
     if size > spec.paths.max_bytes {
         r.push(
             "size cap",
@@ -717,6 +731,15 @@ mod tests {
             );
             eprintln!("valgrind not found: skipped score checks\n{text}");
         }
+    }
+
+    #[test]
+    fn tree_bytes_counts_bytes() {
+        let d = crate::paths::scratch("bytes");
+        std::fs::create_dir_all(d.join("a/b")).unwrap();
+        std::fs::write(d.join("x"), "12345").unwrap();
+        std::fs::write(d.join("a/b/y"), "123").unwrap();
+        assert_eq!(tree_bytes(&d), 8);
     }
 
     #[test]
