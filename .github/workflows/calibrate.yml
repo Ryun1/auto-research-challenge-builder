@@ -1,0 +1,79 @@
+# Measures the calibration set (#6) on a GitHub-hosted runner: the
+# "hostable here" peaks and the x86 laptop-class proxy. Manual only; each
+# repo is capped at 60 min (the hostable limit). Public repos only, cloned
+# without credentials.
+name: Calibrate
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  measure:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 75
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: ecdsafail
+            repo: Ryun1/ecdsafail-challenge
+            sha: 708d567
+            run: ./setup.sh && ./benchmark.sh
+          - name: eip8200-modexp
+            repo: Ryun1/eip8200-challenges
+            sha: 053bd05
+            run: ./setup.sh modexp && ./benchmark.sh modexp
+    steps:
+      - name: Clone ${{ matrix.repo }}@${{ matrix.sha }}
+        run: |
+          git clone --filter=blob:none "https://github.com/${{ matrix.repo }}" target
+          git -C target checkout --detach "${{ matrix.sha }}"
+          git -C target rev-parse HEAD
+      - name: Run under time + 60 min cap
+        working-directory: target
+        run: |
+          command -v /usr/bin/time >/dev/null || sudo apt-get install -y -qq time
+          before=$(df --output=used -B1 / | tail -1)
+          mem0=$(free -b | awk '/^Mem:/{print $3}')
+          # Whole-system memory, not just the largest process (time -v).
+          (while sleep 2; do free -b | awk '/^Mem:/{print $3}'; done) > ../mem.txt &
+          sampler=$!
+          start=$(date +%s)
+          set +e
+          /usr/bin/time -v -o ../time.txt timeout 60m bash -lc '${{ matrix.run }}' > ../run.log 2>&1
+          code=$?
+          set -e
+          end=$(date +%s)
+          kill $sampler
+          mem_peak=$(sort -n ../mem.txt | tail -1)
+          after=$(df --output=used -B1 / | tail -1)
+          rss_kb=$(sed -n 's/.*Maximum resident set size (kbytes): //p' ../time.txt)
+          python3 - "$code" "$((end - start))" "$rss_kb" "$((after - before))" "$(( ${mem_peak:-$mem0} - mem0 ))" > ../peaks.json <<'EOF'
+          import json, os, platform, sys
+          code, secs, rss_kb, disk, mem = (int(x or 0) for x in sys.argv[1:])
+          cpu = next((l.split(":", 1)[1].strip() for l in open("/proc/cpuinfo") if l.startswith("model name")), "")
+          print(json.dumps({
+              "name": os.environ["NAME"], "repo": os.environ["REPO"], "sha": os.environ["SHA"],
+              "exit": code, "timed_out": code == 124, "minutes": round(secs / 60, 1),
+              "ram_gb": round(max(mem, 0) / 1e9, 2), "max_process_rss_gb": round(rss_kb / 1024 / 1024, 2),
+              "disk_gb": round(disk / 1e9, 2),
+              "runner": f"{os.environ['ImageOS']} {os.environ['ImageVersion']}", "cpu": cpu, "vcpus": os.cpu_count(),
+          }, indent=2))
+          EOF
+          cat ../peaks.json
+          tail -40 ../run.log
+        env:
+          NAME: ${{ matrix.name }}
+          REPO: ${{ matrix.repo }}
+          SHA: ${{ matrix.sha }}
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        if: always()
+        with:
+          name: calibrate-${{ matrix.name }}
+          path: |
+            peaks.json
+            time.txt
+            run.log
