@@ -2,11 +2,14 @@
 //!
 //! Laptop validation and "hostable here" are derived from measurements,
 //! never entered as scores.
-#![allow(dead_code)] // wired to `cb rank` in #4
+
+use serde::Deserialize;
+use std::collections::BTreeMap;
 
 pub const RUBRIC_VERSION: u32 = 0;
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum Criterion {
     ExpertScarcity,
     Headroom,
@@ -35,14 +38,16 @@ pub const WEIGHTS: [(Criterion, u32); 10] = [
 ];
 
 /// A pass/fail fact with the link or measurement behind it.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct Check {
     pub pass: bool,
     pub evidence: String,
 }
 
 /// G1–G4. Any failure rejects the candidate.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct Gates {
     /// G1: deterministic verifier, no human judgement in the loop.
     pub verifiable: Check,
@@ -54,13 +59,15 @@ pub struct Gates {
     pub baseline: Check,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct Score {
     pub value: u8,
     pub evidence: String,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "kebab-case")]
 pub enum Fact {
     Yes,
     YesSlow,
@@ -68,14 +75,16 @@ pub enum Fact {
 }
 
 /// Can a participant produce / verify / score on this laptop class?
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct Facts {
     pub produce: Fact,
     pub verify: Fact,
     pub score: Fact,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct Laptop {
     /// Apple Silicon, 16 GB.
     pub apple: Facts,
@@ -85,7 +94,8 @@ pub struct Laptop {
 }
 
 /// Measured peaks of one verify+score run.
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct Peaks {
     pub minutes: f64,
     pub ram_gb: f64,
@@ -105,7 +115,7 @@ pub const HOSTED: Peaks = Peaks {
 pub struct Candidate {
     pub gates: Gates,
     /// Every criterion except [`Criterion::Laptop`].
-    pub scores: Vec<(Criterion, Score)>,
+    pub scores: BTreeMap<Criterion, Score>,
     /// `None` until measured (M1).
     pub laptop: Option<Laptop>,
     /// `None` until measured.
@@ -201,9 +211,6 @@ pub fn evaluate(c: &Candidate) -> Result<Evaluation, Vec<String>> {
         } else if score.evidence.trim().is_empty() {
             errors.push(format!("{criterion:?}: missing evidence"));
         }
-        if c.scores.iter().filter(|(k, _)| k == criterion).count() > 1 {
-            errors.push(format!("{criterion:?}: scored twice"));
-        }
     }
     let laptop_score = c.laptop.as_ref().map(laptop_score);
     if c.laptop
@@ -218,11 +225,7 @@ pub fn evaluate(c: &Candidate) -> Result<Evaluation, Vec<String>> {
     for (criterion, weight) in WEIGHTS {
         let value = match criterion {
             Criterion::Laptop => laptop_score,
-            _ => c
-                .scores
-                .iter()
-                .find(|(k, _)| *k == criterion)
-                .map(|(_, s)| s.value),
+            _ => c.scores.get(&criterion).map(|s| s.value),
         };
         match value {
             Some(v) => weighted += weight * v as u32,
@@ -380,21 +383,21 @@ mod tests {
     #[test]
     fn bad_input_is_an_error_not_a_score() {
         let mut c = candidate(3);
-        c.scores[0].1.value = 6;
-        c.scores[1].1.evidence = " ".into();
-        c.scores.pop();
+        c.scores.get_mut(&Criterion::ExpertScarcity).unwrap().value = 6;
+        c.scores.get_mut(&Criterion::Headroom).unwrap().evidence = " ".into();
+        c.scores.remove(&Criterion::PriorArt);
         c.gates.baseline.evidence.clear();
         let errors = evaluate(&c).unwrap_err();
         assert_eq!(errors.len(), 4, "{errors:?}");
 
         let mut c = candidate(3);
-        c.scores.push((
+        c.scores.insert(
             Criterion::Laptop,
             Score {
                 value: 5,
                 evidence: "guess".into(),
             },
-        ));
+        );
         assert!(evaluate(&c).is_err());
     }
 
