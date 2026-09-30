@@ -1,0 +1,11 @@
+# Rust kit workspace (PLAN.md §7a). Everything here is the judge except
+# candidate/src/, the only editable path.
+[workspace]
+members = ["candidate", "reference", "oracle", "harness"]
+resolver = "2"
+
+[workspace.package]
+edition = "2021"
+
+[profile.release]
+debug = true # symbols for callgrind

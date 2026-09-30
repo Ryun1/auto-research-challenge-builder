@@ -413,7 +413,7 @@ pub fn scaffold(
         ),
     ] {
         let body = format!(
-            "Replace with a candidate that gives {what}.\nIt must build and then FAIL the verifier (cb preflight checks).\n"
+            "Put the files that turn the baseline into {what} here: preflight copies them\nover baseline/. The result must build and then FAIL the verifier.\n"
         );
         write(&format!("preflight/broken/{name}/README.md"), &body, false)?;
     }

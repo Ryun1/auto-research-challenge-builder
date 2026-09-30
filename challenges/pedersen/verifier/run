@@ -1,0 +1,4 @@
+#!/usr/bin/env bash
+# Bit-exact vs every oracle on edge cases + CB_SEED-salted inputs.
+set -euo pipefail
+exec ./target/release/verify

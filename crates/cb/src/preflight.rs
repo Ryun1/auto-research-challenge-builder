@@ -249,31 +249,36 @@ pub fn tree_bytes(dir: &Path) -> u64 {
         .sum()
 }
 
-/// Copies the challenge to a scratch dir with `with` in place of the editable surface.
-fn workspace(dir: &Path, editable: &str, with: &Path, tag: &str) -> Result<PathBuf, String> {
+/// Copies the challenge to a scratch dir whose editable surface is the
+/// baseline with each of `overlays` copied on top, in order. Broken variants
+/// ship only the files they change.
+fn workspace(
+    dir: &Path,
+    editable: &str,
+    overlays: &[PathBuf],
+    tag: &str,
+) -> Result<PathBuf, String> {
     let ws = crate::paths::scratch(&format!("preflight-{tag}"));
-    let ok = |s: std::process::ExitStatus| s.success();
-    let cp = Command::new("cp")
-        .arg("-R")
-        .arg(dir)
-        .arg(&ws)
-        .status()
-        .map_err(|e| e.to_string())?;
+    let cp = |from: &Path, to: &Path| -> Result<(), String> {
+        let ok = Command::new("cp")
+            .arg("-R")
+            .arg(from)
+            .arg(to)
+            .status()
+            .map_err(|e| e.to_string())?
+            .success();
+        if ok {
+            Ok(())
+        } else {
+            Err(format!("copying {} into {}", from.display(), to.display()))
+        }
+    };
+    cp(dir, &ws)?;
     let target = ws.join(editable);
     let _ = std::fs::remove_dir_all(&target);
     std::fs::create_dir_all(&target).map_err(|e| e.to_string())?;
-    let fill = Command::new("cp")
-        .arg("-R")
-        .arg(format!("{}/.", with.display()))
-        .arg(&target)
-        .status()
-        .map_err(|e| e.to_string())?;
-    if !ok(cp) || !ok(fill) {
-        return Err(format!(
-            "copying {} into {}",
-            with.display(),
-            target.display()
-        ));
+    for layer in std::iter::once(&dir.join("baseline")).chain(overlays) {
+        cp(&layer.join("."), &target)?;
     }
     Ok(ws)
 }
@@ -387,7 +392,7 @@ pub fn run_all(dir: &Path) -> Result<Report, String> {
     }
 
     // Baseline: setup, build, verify, score. Measured for laptop facts and peaks.
-    let base = workspace(dir, editable, &dir.join("baseline"), "baseline")?;
+    let base = workspace(dir, editable, &[], "baseline")?;
     let setup = run(&env, &base, &spec.commands.setup, seed);
     if !setup.ok {
         r.push("setup", Status::Fail, setup.detail);
@@ -496,7 +501,7 @@ pub fn run_all(dir: &Path) -> Result<Report, String> {
             );
             continue;
         }
-        let ws = workspace(dir, editable, &src, name)?;
+        let ws = workspace(dir, editable, std::slice::from_ref(&src), name)?;
         let b = spec
             .commands
             .build

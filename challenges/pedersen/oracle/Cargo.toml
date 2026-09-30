@@ -1,0 +1,11 @@
+[package]
+name = "oracle"
+version = "0.0.0"
+edition.workspace = true
+
+[dependencies]
+lambdaworks-crypto = { version = "=0.13.0", default-features = false }
+lambdaworks-math = { version = "=0.13.0", default-features = false }
+# Pre-lambdaworks starknet-rs: its own field arithmetic (starknet-ff), so an
+# independent implementation. starknet-crypto >= 0.7 wraps lambdaworks.
+starknet-crypto-06 = { package = "starknet-crypto", version = "=0.6.2" }

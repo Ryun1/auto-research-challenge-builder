@@ -1,0 +1,21 @@
+This crate contains code flattened from lambdaworks
+(lambdaworks-crypto 0.13.0 and lambdaworks-math 0.13.0),
+https://github.com/lambdaclass/lambdaworks
+
+Copyright (c) LambdaClass and lambdaworks contributors.
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use these files except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+
+Modifications: the lambdaworks generic field/curve/hash code was specialised to
+Stark252PrimeField and StarkCurve and flattened into src/field.rs, src/curve.rs,
+src/constants.rs and src/lib.rs. The Pedersen algorithm itself (lambdaworks
+attributes it to starknet-rs by Jonathan Lei, MIT/Apache-2.0) is unchanged.

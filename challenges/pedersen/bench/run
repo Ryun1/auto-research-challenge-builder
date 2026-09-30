@@ -1,0 +1,4 @@
+#!/usr/bin/env bash
+# Callgrind instruction count (ranks) + paired wall time (guards). Linux + valgrind.
+set -euo pipefail
+exec ./target/release/score
