@@ -3,6 +3,7 @@ use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
 mod candidate;
+mod challenge;
 mod paths;
 mod rubric;
 mod site;
@@ -23,6 +24,11 @@ enum Family {
     Proof,
 }
 
+#[derive(Clone, Copy, ValueEnum)]
+enum Kit {
+    Rust,
+}
+
 #[derive(Subcommand)]
 enum Command {
     /// Scaffold challenges/<slug>/
@@ -31,7 +37,9 @@ enum Command {
         #[arg(long)]
         family: Family,
         #[arg(long)]
-        kit: Option<String>,
+        kit: Option<Kit>,
+        #[arg(long, default_value = "challenges")]
+        root: PathBuf,
     },
     /// Run launch checks for a challenge
     Preflight {
@@ -72,7 +80,22 @@ fn main() -> ExitCode {
             out,
         } => import(&benchmark_json, &url, &out),
         Command::Rank { dir } => candidate::rank(&dir).map(|table| print!("{table}")),
-        Command::New { .. } => stub("new"),
+        Command::New {
+            slug,
+            family,
+            kit,
+            root,
+        } => {
+            let family = family.to_possible_value().unwrap();
+            let kit = kit.map(|k| k.to_possible_value().unwrap());
+            challenge::scaffold(
+                &root,
+                &slug,
+                family.get_name(),
+                kit.as_ref().map(|k| k.get_name()),
+            )
+            .map(|dir| println!("created {}", dir.display()))
+        }
         Command::Preflight { .. } => stub("preflight"),
         Command::Site { dir, out } => {
             site::build(&dir, &out).map(|p| println!("wrote {} (internal only)", p.display()))
