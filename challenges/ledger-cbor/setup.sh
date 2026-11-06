@@ -55,7 +55,17 @@ done
 
 mkdir -p .bin
 ( cd "$L"
-  cabal update -v0
+  # Mirrors flake (a 403 from a Hackage mirror failed preflight 42299551573).
+  # The index-state is pinned, so a cached index is enough once one exists.
+  updated=false
+  for i in 1 2 3; do cabal update -v0 && { updated=true; break; }; sleep $((i * 10)); done
+  if ! $updated; then
+    repos="$(cabal path --remote-repo-cache)"
+    for r in hackage.haskell.org cardano-haskell-packages; do
+      [ -e "$repos/$r/01-index.tar" ] || { echo "cabal update failed and no cached $r index"; exit 1; }
+    done
+    echo "cabal update failed; using the cached index (index-state is pinned)"
+  fi
   cabal build -v1 --project-file=cabal.project.ref --builddir=dist-ref ledger-cbor-harness
 )
 cp "$(cd "$L" && cabal list-bin --project-file=cabal.project.ref --builddir=dist-ref ledger-cbor-harness)" .bin/reference
