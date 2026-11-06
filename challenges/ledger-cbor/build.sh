@@ -1,8 +1,12 @@
 #!/usr/bin/env bash
 # The only step that compiles submission code: token policy, then build the
-# harness against candidate/ in place of cardano-ledger-binary.
+# harness against candidate/ in place of cardano-ledger-binary (incremental, in
+# setup.sh's shared ledger cache).
 set -euo pipefail
 cd "$(dirname "$0")"
+
+LEDGER_SHA=7827506b7518284d7f9dbbe3502a20431e513fe9
+L="${CB_LEDGER_CACHE:-${XDG_CACHE_HOME:-$HOME/.cache}/cb-ledger-cbor}/$LEDGER_SHA"
 
 python3 - <<'EOF'
 # Policy, relative to the baseline:
@@ -39,8 +43,7 @@ if bad:
     print("policy: " + "; ".join(bad[:10])); sys.exit(1)
 EOF
 
-rm -rf .ledger/cand-binary
-cp -R candidate .ledger/cand-binary
-cd .ledger
-cabal build -v1 --project-file=cabal.project.cand --builddir=dist-cand ledger-cbor-harness
-cp "$(cabal list-bin --project-file=cabal.project.cand --builddir=dist-cand ledger-cbor-harness)" ../.bin/candidate
+[ -d "$L/dist-cand" ] || { echo "run setup.sh first (no ledger cache at $L)"; exit 1; }
+rsync -a -c --delete candidate/ "$L/cand-binary/"
+( cd "$L" && cabal build -v1 --project-file=cabal.project.cand --builddir=dist-cand ledger-cbor-harness )
+cp "$(cd "$L" && cabal list-bin --project-file=cabal.project.cand --builddir=dist-cand ledger-cbor-harness)" .bin/candidate

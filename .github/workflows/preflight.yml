@@ -20,24 +20,76 @@ jobs:
         # Laptop-class proxies: Apple Silicon (arm64) and x86 Linux 2 vCPU / 8 GB.
         runner: [ubuntu-24.04, macos-15]
     runs-on: ${{ matrix.runner }}
-    timeout-minutes: 90
+    # Haskell challenges warm a cold cardano-ledger build first (over an hour).
+    timeout-minutes: 330
+    env:
+      SLUG: ${{ inputs.slug }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+      - name: Detect toolchain
+        # A challenge with a cabal harness (e.g. ledger-cbor) needs the Haskell toolchain.
+        run: |
+          [ -d "challenges/$SLUG" ] || { echo "no challenges/$SLUG"; exit 1; }
+          if compgen -G "challenges/$SLUG/harness/*.cabal" > /dev/null; then h=true; else h=false; fi
+          echo "HASKELL=$h" | tee -a "$GITHUB_ENV"
       - run: rustup toolchain install
       - if: runner.os == 'Linux'
         run: sudo apt-get install -y -qq valgrind # Rust kit scoring
       - run: cargo build --locked --release
+
+      # ---- Haskell challenges only (Linux; macOS reports "no" at setup) ----
+      - name: Free disk space (as cardano-ledger's CI does)
+        if: env.HASKELL == 'true' && runner.os == 'Linux'
+        run: |
+          sudo rm -rf /opt/google/chrome /opt/microsoft/msedge /opt/microsoft/powershell /opt/pipx \
+            /usr/lib/mono /usr/local/julia* /usr/local/lib/android /usr/local/lib/node_modules \
+            /usr/local/share/chromium /usr/local/share/powershell /usr/share/dotnet /usr/share/swift
+          df -h /
+      - name: System deps (libsodium, secp256k1, blst)
+        if: env.HASKELL == 'true' && runner.os == 'Linux'
+        uses: input-output-hk/actions/base@fc5641d3c3a9d5941bbad5a623236d799b521d9f
+        with:
+          use-sodium-vrf: false
+      - name: Install GHC + cabal
+        id: hs
+        if: env.HASKELL == 'true' && runner.os == 'Linux'
+        uses: input-output-hk/actions/haskell@fc5641d3c3a9d5941bbad5a623236d799b521d9f
+        with:
+          ghc-version: "9.6.7"
+          cabal-version: "3.16"
+      - name: Restore cabal store
+        id: cabal-cache
+        if: env.HASKELL == 'true' && runner.os == 'Linux'
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ steps.hs.outputs.cabal-store }}
+          key: preflight-${{ inputs.slug }}-${{ hashFiles(format('challenges/{0}/setup.sh', inputs.slug)) }}
+          restore-keys: preflight-${{ inputs.slug }}-
+      - name: Warm setup (outside cb's 60-min per-command limit)
+        if: env.HASKELL == 'true' && runner.os == 'Linux'
+        run: |
+          start=$(date +%s)
+          "challenges/$SLUG/setup.sh"
+          echo "warm setup: $(( ($(date +%s) - start) / 60 )) min" | tee warm-setup.txt
+          df -h /
+      - name: Save cabal store
+        if: env.HASKELL == 'true' && runner.os == 'Linux' && steps.cabal-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ steps.hs.outputs.cabal-store }}
+          key: preflight-${{ inputs.slug }}-${{ hashFiles(format('challenges/{0}/setup.sh', inputs.slug)) }}
+
       - name: cb preflight
         # The Linux runner is the gate. macOS is a laptop-class report
         # (e.g. callgrind scoring is "no" there by design), so it never fails the run.
         continue-on-error: ${{ runner.os == 'macOS' }}
         run: ./target/release/cb preflight "$SLUG" --out preflight-out
-        env:
-          SLUG: ${{ inputs.slug }}
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         if: always()
         with:
           name: preflight-${{ inputs.slug }}-${{ matrix.runner }}
-          path: preflight-out/
+          path: |
+            preflight-out/
+            warm-setup.txt

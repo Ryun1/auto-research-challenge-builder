@@ -25,11 +25,14 @@ accepts more is a consensus bug, not a speedup.
 run (start-up plus reading the input). The RTS timer is off (`-V0`), so counts are deterministic: `speedup = reference / candidate`. A paired wall-time run guards
 against regressions (as in `kits/rust`).
 
-**Build.** `setup.sh` clones cardano-ledger at the pin and builds the reference
-plus external deps (cache `~/.cabal/store`). `build.sh` applies the token policy
-(no FFI, new `unsafe*` identifiers, `runRW#`, TemplateHaskell, CPP, OPTIONS pragmas or IO modules, counted per identifier against the baseline),
-then rebuilds the ledger packages above the binary package against `candidate/`.
-That rebuild is the per-submission cost.
+**Build.** `setup.sh` clones cardano-ledger at the pin into a shared cache
+(`$CB_LEDGER_CACHE`, default `~/.cache/cb-ledger-cbor/<sha>`), builds the
+reference, and builds the baseline as a warm candidate build. Preflight runs
+setup once per workspace, so only the first run is cold. `build.sh` applies the
+token policy (no FFI, new `unsafe*` identifiers, `runRW#`, TemplateHaskell, CPP,
+OPTIONS pragmas or IO modules, counted per identifier against the baseline),
+syncs `candidate/` into the cache and rebuilds incrementally. Changed modules and
+their dependents up to Conway recompile: that is the per-submission cost.
 
 Needs Linux (valgrind), GHC 9.6.7, cabal 3.16, and libsodium, secp256k1 and
 blst. CI installs them with `input-output-hk/actions/base`.
