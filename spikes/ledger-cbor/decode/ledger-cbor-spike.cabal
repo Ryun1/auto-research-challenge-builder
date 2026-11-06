@@ -1,0 +1,18 @@
+cabal-version: 3.0
+name: ledger-cbor-spike
+version: 0.1.0.0
+build-type: Simple
+
+executable ledger-cbor-spike
+  main-is: Main.hs
+  default-language: Haskell2010
+  -- no full laziness: keep the timed decode inside the loop
+  ghc-options: -O2 -rtsopts -fno-full-laziness
+  build-depends:
+    base,
+    base16-bytestring,
+    bytestring,
+    cardano-ledger-binary,
+    cardano-ledger-conway,
+    cardano-ledger-core,
+    deepseq,

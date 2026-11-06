@@ -1,0 +1,126 @@
+# Spike (not a challenge): can cardano-ledger's Conway CBOR decoding be built and
+# scored on a GitHub-hosted runner? Measures cold build peaks, then decodes 932
+# mainnet Conway txs natively and under Callgrind (determinism + per-iteration Ir).
+# Runs only on pushes to spike/ledger-cbor.
+name: Spike ledger-cbor
+
+on:
+  push:
+    branches: [spike/ledger-cbor]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  LEDGER_REPO: IntersectMBO/cardano-ledger
+  LEDGER_SHA: 7827506b7518284d7f9dbbe3502a20431e513fe9
+  GHC: "9.6.7"
+  OUT: ${{ github.workspace }}/out
+
+jobs:
+  spike:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 350
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Free disk space (as cardano-ledger's CI does)
+        run: |
+          mkdir -p "$OUT"
+          df -B1 --output=avail / | tail -1 | awk '{printf "%.1f\n", $1/1e9}' > "$OUT/disk_free_before_cleanup_gb"
+          sudo rm -rf /opt/google/chrome /opt/microsoft/msedge /opt/microsoft/powershell /opt/pipx \
+            /usr/lib/mono /usr/local/julia* /usr/local/lib/android /usr/local/lib/node_modules \
+            /usr/local/share/chromium /usr/local/share/powershell /usr/share/dotnet /usr/share/swift
+          df -h /
+          nproc; free -h; grep -m1 'model name' /proc/cpuinfo
+
+      - name: Clone cardano-ledger
+        run: |
+          git clone --filter=blob:none "https://github.com/$LEDGER_REPO" ledger
+          git -C ledger checkout --detach "$LEDGER_SHA"
+          cp -r spikes/ledger-cbor/decode ledger/ledger-cbor-spike
+          cat >> ledger/cabal.project.local <<EOF
+          packages: ledger-cbor-spike
+          package cardano-crypto-praos
+            flags: -external-libsodium-vrf
+          EOF
+
+      - name: System deps (libsodium, secp256k1, blst)
+        uses: input-output-hk/actions/base@fc5641d3c3a9d5941bbad5a623236d799b521d9f
+        with:
+          use-sodium-vrf: false
+
+      - name: Install GHC + cabal
+        id: hs
+        uses: input-output-hk/actions/haskell@fc5641d3c3a9d5941bbad5a623236d799b521d9f
+        with:
+          ghc-version: ${{ env.GHC }}
+          cabal-version: "3.16"
+
+      - name: Restore cabal store
+        id: cache
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ steps.hs.outputs.cabal-store }}
+          key: spike-ledger-cbor-${{ env.GHC }}-${{ env.LEDGER_SHA }}
+
+      - name: Build dependencies (measured)
+        working-directory: ledger
+        run: |
+          echo "cache_hit=${{ steps.cache.outputs.cache-hit }}" | tee "$OUT/cache.txt"
+          cabal update
+          bash ../spikes/ledger-cbor/measure.sh build-deps cabal build ledger-cbor-spike --only-dependencies
+
+      - name: Save cabal store
+        if: steps.cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ steps.hs.outputs.cabal-store }}
+          key: spike-ledger-cbor-${{ env.GHC }}-${{ env.LEDGER_SHA }}
+
+      - name: Build spike exe (measured)
+        working-directory: ledger
+        run: |
+          bash ../spikes/ledger-cbor/measure.sh build-exe cabal build ledger-cbor-spike
+          cp "$(cabal list-bin ledger-cbor-spike)" "$OUT/ledger-cbor-spike"
+          du -sh "${{ steps.hs.outputs.cabal-store }}" dist-newstyle | tee "$OUT/sizes.txt"
+
+      - name: Decode natively (oracle check + wall time)
+        run: |
+          C=spikes/ledger-cbor/corpus/conway-txs.hex
+          "$OUT/ledger-cbor-spike" "$C" 0 | tee "$OUT/oracle.txt"
+          for i in 1 2 3; do
+            bash spikes/ledger-cbor/measure.sh native-50-$i "$OUT/ledger-cbor-spike" "$C" 50 +RTS -N1 -s -RTS
+          done
+
+      - name: Decode under Callgrind (determinism + per-iteration Ir)
+        run: |
+          sudo apt-get install -y -qq valgrind
+          C=spikes/ledger-cbor/corpus/conway-txs.hex
+          for it in 1 3; do for rep in a b; do
+            valgrind --tool=callgrind --callgrind-out-file="$OUT/cg-$it-$rep.out" \
+              "$OUT/ledger-cbor-spike" "$C" "$it" +RTS -N1 -RTS 2>&1 | tail -3
+            echo "$it $rep $(grep -m1 '^summary:' "$OUT/cg-$it-$rep.out" | awk '{print $2}')" | tee -a "$OUT/callgrind.txt"
+          done; done
+          python3 - "$OUT/callgrind.txt" <<'EOF' | tee "$OUT/callgrind-summary.txt"
+          import sys, collections
+          ir = collections.defaultdict(list)
+          for l in open(sys.argv[1]):
+              it, rep, n = l.split(); ir[int(it)].append(int(n))
+          for it, v in sorted(ir.items()):
+              print(f"iters={it} Ir={v} spread={(max(v)-min(v))/min(v):.2e}")
+          per = (sum(ir[3]) / 2 - sum(ir[1]) / 2) / 2
+          print(f"per_iteration_Ir={per:.0f} (932 txs) per_tx_Ir={per/932:.0f}")
+          EOF
+
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        if: always()
+        with:
+          name: spike-ledger-cbor
+          path: |
+            out/*.json
+            out/*.txt
+            out/*.log
+            out/*.time
+            out/disk_free_before_cleanup_gb
