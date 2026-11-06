@@ -37,7 +37,7 @@ evidence = "no published decode benchmarks (searched 2026-11-06). Measured 97k I
 
 [scores.eval_cost]
 value = 3
-evidence = "cold build 35.7 min / 1.7 GB RAM (incl. plutus-core); with the cabal store cached, all ledger packages rebuild in 7.0 min, so a PR is ~15-20 min (reference + candidate). Scoring itself is seconds"
+evidence = "cold build 35.7 min / 1.7 GB RAM (incl. plutus-core); with the cabal store cached, all ledger packages rebuild in 7.0 min, so a PR is ~15-20 min (reference + candidate; estimate, not yet run). Scoring itself is seconds"
 
 [scores.noise]
 value = 5

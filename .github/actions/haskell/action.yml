@@ -43,6 +43,16 @@ runs:
       uses: input-output-hk/actions/base@fc5641d3c3a9d5941bbad5a623236d799b521d9f
       with:
         use-sodium-vrf: false
+    - name: Register the Cardano libs with the loader
+      # The base action exposes them only via LD_LIBRARY_PATH, which cb's
+      # sandbox (env -i, as nobody) drops: sandboxed verify/score would fail
+      # to load libsodium. ldconfig makes them visible to every process.
+      if: steps.detect.outputs.haskell == 'true'
+      shell: bash
+      run: |
+        echo /usr/local/opt/cardano/lib | sudo tee /etc/ld.so.conf.d/cardano.conf
+        sudo ldconfig
+        ldconfig -p | grep -E 'libsodium|libsecp256k1|libblst'
     - name: GHC + cabal
       id: hs
       if: steps.detect.outputs.haskell == 'true'

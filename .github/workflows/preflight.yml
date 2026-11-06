@@ -46,6 +46,12 @@ jobs:
           "challenges/$SLUG/setup.sh"
           echo "warm setup: $(( ($(date +%s) - start) / 60 )) min" | tee warm-setup.txt
           df -h /
+          # cb preflight runs unsandboxed; scoring runs under env -i as nobody.
+          # Check the judge binary still loads its libs with a cleared env.
+          # (Copied to /tmp: nobody can't traverse the runner's home.)
+          cp "challenges/$SLUG/.bin/reference" /tmp/ref-check && chmod a+rx /tmp/ref-check
+          sudo -u nobody env -i PATH=/usr/local/bin:/usr/bin:/bin HOME=/tmp /tmp/ref-check digest /dev/null
+          echo "reference loads in a cleared env as nobody"
       - name: Save cabal store (trusted manual run, judge code only so far)
         if: steps.hs.outputs.haskell == 'true' && steps.hs.outputs.cache-hit != 'true'
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
