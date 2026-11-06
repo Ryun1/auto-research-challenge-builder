@@ -11,8 +11,15 @@ REF, CAND = ROOT / ".bin/reference", ROOT / ".bin/candidate"
 VALID_N, MUTANT_N, SCORE_N, WALL_REPS = 600, 300, 800, 5
 
 
+def pool_path():
+    # setup.sh writes corpus/fresh.* when CB_POOL=fresh (CI scoring): recent
+    # random mainnet blocks, never in the repo. Otherwise the repo pool.
+    fresh = ROOT / "corpus/fresh.hex.gz"
+    return fresh if fresh.exists() else ROOT / "corpus/pool.hex.gz"
+
+
 def pool():
-    with gzip.open(ROOT / "corpus/pool.hex.gz", "rt") as f:
+    with gzip.open(pool_path(), "rt") as f:
         return [bytes.fromhex(l) for l in f.read().split()]
 
 
@@ -56,7 +63,7 @@ def verify(seed):
         return {"ok": False, "detail": f"candidate printed {len(cand)} lines for {len(cases)} inputs"}
     bad = [(i, k, r, c) for i, ((k, _), r, c) in enumerate(zip(cases, ref, cand)) if r != c]
     rejected = sum(not r.startswith("ok ") for r in ref)
-    detail = f"{len(cases)} inputs ({rejected} rejected by reference): {len(bad)} differ"
+    detail = f"{pool_path().name}: {len(cases)} inputs ({rejected} rejected by reference): {len(bad)} differ"
     if bad:
         detail += "; first: " + ", ".join(f"#{i} {k} ref={r[:12]} cand={c[:12]}" for i, k, r, c in bad[:3])
     return {"ok": not bad, "detail": detail}

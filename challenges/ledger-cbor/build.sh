@@ -43,7 +43,7 @@ if bad:
     print("policy: " + "; ".join(bad[:10])); sys.exit(1)
 EOF
 
-[ -d "$L/dist-cand" ] || { echo "run setup.sh first (no ledger cache at $L)"; exit 1; }
+[ -x .bin/reference ] && [ -d "$L/dist-ref" ] || { echo "run setup.sh first (no ledger cache at $L)"; exit 1; }
 rsync -a -c --delete candidate/ "$L/cand-binary/"
 ( cd "$L" && cabal build -v1 --project-file=cabal.project.cand --builddir=dist-cand ledger-cbor-harness )
 cp "$(cd "$L" && cabal list-bin --project-file=cabal.project.cand --builddir=dist-cand ledger-cbor-harness)" .bin/candidate

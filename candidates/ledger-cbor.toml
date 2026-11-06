@@ -1,5 +1,6 @@
-# Draft 2026-11-06. Spike in flight: run 42294073486 (branch spike/ledger-cbor)
-# decides peaks, laptop, eval_cost and noise. Values marked "estimate" are unmeasured.
+# Draft 2026-11-06. Measured by spike runs 42294073486 (cold build) and 42299924090
+# (cached build, Callgrind, native), ubuntu-24.04 2 vCPU, upstream +asserts on.
+# Values marked "estimate" are unmeasured.
 [candidate]
 slug = "ledger-cbor"
 title = "Cardano ledger: faster Conway CBOR decoding (cardano-ledger, Haskell)"
@@ -16,11 +17,11 @@ evidence = "three-part oracle vs the pinned reference decoder, per input: same s
 
 [gates.scalar_objective]
 pass = true
-evidence = "Callgrind Ir per pass over a seeded sample of mainnet Conway txs; paired wall time must not regress. Determinism under GHC's RTS: spike run 42294073486"
+evidence = "Callgrind Ir per pass over a seeded sample of mainnet Conway txs; paired wall time must not regress. Deterministic: 206,304,805 Ir on both repeats at 1 pass, 387,045,658 at 3 (run 42299924090)"
 
 [gates.bounded]
 pass = true
-evidence = "decoding 932 txs (622 KB) is sub-second natively (estimate); cold build is the long pole, cached after"
+evidence = "decoding 932 txs takes 15 ms natively (measured); cold build 35.7 min, 7.0 min with the cabal store cached (runs 42294073486, 42299924090)"
 
 [gates.baseline]
 pass = true
@@ -32,15 +33,15 @@ evidence = "Haskell performance work (GHC Core, cborg, allocation tuning) is a s
 
 [scores.headroom]
 value = 3
-evidence = "no published decode benchmarks found (searched 2026-11-06); Annotator/MemoBytes keeps original bytes, which suggests slack but is unmeasured. Rust pallas on the same corpus would give a bound"
+evidence = "no published decode benchmarks (searched 2026-11-06). Measured 97k Ir and ~54 KB allocated per tx (avg 668 bytes), about 80 bytes allocated per input byte, which hints at slack. No bound yet: run pallas (Rust) on the same pool"
 
 [scores.eval_cost]
-value = 2
-evidence = "estimate: full ledger dependency tree incl. plutus-core; cardano-ledger CI needs disk cleanup to build on ubuntu-latest. Spike measures cold + cached"
+value = 3
+evidence = "cold build 35.7 min / 1.7 GB RAM (incl. plutus-core); with the cabal store cached, all ledger packages rebuild in 7.0 min, so a PR is ~15-20 min (reference + candidate). Scoring itself is seconds"
 
 [scores.noise]
-value = 4
-evidence = "estimate: Ir count with +RTS -N1 should be near-deterministic; GC scheduling may add small spread. Spike runs each count twice"
+value = 5
+evidence = "Ir spread 0 across repeats at 1 and 3 passes (run 42299924090); native wall 0.768-0.772 s over 3 runs"
 
 [scores.gaming_resistance]
 value = 4
@@ -62,4 +63,14 @@ evidence = "primitive decoders, map/set decoding, Annotator byte slicing, per-fi
 value = 3
 evidence = "cborg internals, ledger issue tracker; pallas/Amaru (Rust) decoders as comparison points"
 
-# [laptop] and [peaks]: fill from spike run 42294073486.
+[laptop]
+evidence = "x86: ubuntu-24.04 2 vCPU runs (cold build 35.7 min, cached 7.0 min, verify/score seconds). Apple: not measured; GHC builds natively but valgrind is Linux-only, so scoring needs Linux (estimate)"
+apple = { produce = "yes-slow", verify = "yes-slow", score = "no" }
+x86 = { produce = "yes-slow", verify = "yes", score = "yes" }
+
+[peaks]
+minutes = 36.0
+ram_gb = 1.7
+disk_gb = 1.6
+gpu = false
+evidence = "cold setup+build on ubuntu-24.04 (run 42294073486): 35.7 min, 1.69 GB RAM, 682 MB cabal store + 942 MB build dir; verify+score alone is seconds. Free disk 35.5 GB after cleanup"
