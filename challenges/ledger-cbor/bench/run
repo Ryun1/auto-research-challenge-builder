@@ -1,0 +1,5 @@
+#!/usr/bin/env bash
+# Callgrind instruction count (ranks) + paired wall time (guards). Linux + valgrind.
+set -euo pipefail
+cd "$(dirname "$0")/.."
+exec python3 verifier/judge.py score

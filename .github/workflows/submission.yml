@@ -68,7 +68,8 @@ jobs:
     needs: gate
     if: needs.gate.outputs.ok == 'true'
     runs-on: ${{ needs.gate.outputs.runner }}
-    timeout-minutes: 90
+    # Haskell challenges rebuild the ledger packages against the submission.
+    timeout-minutes: 150
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -81,11 +82,17 @@ jobs:
       - run: rustup toolchain install
       - if: needs.gate.outputs.kit == 'rust'
         run: sudo apt-get install -y -qq valgrind
+      # From the base checkout, so trusted. Restores the cabal store, never saves
+      # it: this job compiles submission code.
+      - uses: ./.github/actions/haskell
+        with:
+          slug: ${{ needs.gate.outputs.slug }}
       - run: cargo build --locked --release
       - name: Build, then verify + score sandboxed
         run: ./target/release/cb score "$SLUG" --submission gate/submission --sandbox --out score.json
         env:
           SLUG: ${{ needs.gate.outputs.slug }}
+          CB_POOL: fresh # challenges that support it score on inputs that aren't in the repo
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         if: always()
         with:

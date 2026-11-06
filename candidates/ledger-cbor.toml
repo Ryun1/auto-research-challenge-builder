@@ -1,0 +1,76 @@
+# Draft 2026-11-06. Measured by spike runs 42294073486 (cold build) and 42299924090
+# (cached build, Callgrind, native), ubuntu-24.04 2 vCPU, upstream +asserts on.
+# Values marked "estimate" are unmeasured.
+[candidate]
+slug = "ledger-cbor"
+title = "Cardano ledger: faster Conway CBOR decoding (cardano-ledger, Haskell)"
+family = "perf"
+direction = "minimise"
+category = "haskell"
+url = "https://github.com/IntersectMBO/cardano-ledger"
+# challenges/ledger-cbor: token policy in build.sh (no FFI, new unsafe*, runRW#, TH, CPP, IO).
+editable = ["libs/cardano-ledger-binary/src/"]  # v1: binary package only; Conway instances frozen
+
+[gates.verifiable]
+pass = true
+evidence = "three-part oracle vs the pinned reference decoder, per input: same show of the decoded tx, same re-encoded bytes (hashed), and same accept/reject on seeded mutants (truncate/flip/append/prefix), in challenges/ledger-cbor/verifier/judge.py; not yet run against a real build"
+
+[gates.scalar_objective]
+pass = true
+evidence = "Callgrind Ir per pass over a seeded sample of mainnet Conway txs; paired wall time must not regress. Deterministic: 206,304,805 Ir on both repeats at 1 pass, 387,045,658 at 3 (run 42299924090)"
+
+[gates.bounded]
+pass = true
+evidence = "decoding 932 txs takes 15 ms natively (measured); cold build 35.7 min, 7.0 min with the cabal store cached (runs 42294073486, 42299924090)"
+
+[gates.baseline]
+pass = true
+evidence = "cardano-ledger @ 7827506 (master, 2026-11-06), Apache-2.0"
+
+[scores.expert_scarcity]
+value = 4
+evidence = "Haskell performance work (GHC Core, cborg, allocation tuning) is a scarce skill; agents are weaker in Haskell than Rust (estimate)"
+
+[scores.headroom]
+value = 3
+evidence = "no published decode benchmarks (searched 2026-11-06). Measured 97k Ir and ~54 KB allocated per tx (avg 668 bytes), about 80 bytes allocated per input byte, which hints at slack. No bound yet: run pallas (Rust) on the same pool"
+
+[scores.eval_cost]
+value = 3
+evidence = "cold build 35.7 min / 1.7 GB RAM (incl. plutus-core); with the cabal store cached, all ledger packages rebuild in 7.0 min, so a PR is ~15-20 min (reference + candidate; estimate, not yet run). Scoring itself is seconds"
+
+[scores.noise]
+value = 5
+evidence = "Ir spread 0 across repeats at 1 and 3 passes (run 42299924090); native wall 0.768-0.772 s over 3 runs"
+
+[scores.gaming_resistance]
+value = 4
+evidence = "salted mainnet sample from a large pool, reject-parity corpus, banned tokens; risk: a decoder that accepts more is a consensus bug, so reject parity is a hard gate"
+
+[scores.fidelity]
+value = 5
+evidence = "the decoders cardano-node runs on every block and mempool tx"
+
+[scores.value]
+value = 3
+evidence = "real node hot path for Cardano; indirect for Starknet (demo of the builder on another ecosystem)"
+
+[scores.decomposability]
+value = 4
+evidence = "primitive decoders, map/set decoding, Annotator byte slicing, per-field instances: independent steps"
+
+[scores.prior_art]
+value = 3
+evidence = "cborg internals, ledger issue tracker; pallas/Amaru (Rust) decoders as comparison points"
+
+[laptop]
+evidence = "x86: ubuntu-24.04 2 vCPU runs (cold build 35.7 min, cached 7.0 min, verify/score seconds). Apple: not measured; GHC builds natively but valgrind is Linux-only, so scoring needs Linux (estimate)"
+apple = { produce = "yes-slow", verify = "yes-slow", score = "no" }
+x86 = { produce = "yes-slow", verify = "yes", score = "yes" }
+
+[peaks]
+minutes = 36.0
+ram_gb = 1.7
+disk_gb = 1.6
+gpu = false
+evidence = "cold setup+build on ubuntu-24.04 (run 42294073486): 35.7 min, 1.69 GB RAM, 682 MB cabal store + 942 MB build dir; verify+score alone is seconds. Free disk 35.5 GB after cleanup"

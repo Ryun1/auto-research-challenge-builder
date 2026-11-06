@@ -20,7 +20,10 @@ jobs:
         # Laptop-class proxies: Apple Silicon (arm64) and x86 Linux 2 vCPU / 8 GB.
         runner: [ubuntu-24.04, macos-15]
     runs-on: ${{ matrix.runner }}
-    timeout-minutes: 90
+    # Haskell challenges warm a cold cardano-ledger build first (over an hour).
+    timeout-minutes: 330
+    env:
+      SLUG: ${{ inputs.slug }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -29,15 +32,42 @@ jobs:
       - if: runner.os == 'Linux'
         run: sudo apt-get install -y -qq valgrind # Rust kit scoring
       - run: cargo build --locked --release
+
+      # Haskell challenges only (Linux; macOS reports "no" at setup).
+      - id: hs
+        if: runner.os == 'Linux'
+        uses: ./.github/actions/haskell
+        with:
+          slug: ${{ inputs.slug }}
+      - name: Warm setup (outside cb's 60-min per-command limit)
+        if: steps.hs.outputs.haskell == 'true'
+        run: |
+          start=$(date +%s)
+          "challenges/$SLUG/setup.sh"
+          echo "warm setup: $(( ($(date +%s) - start) / 60 )) min" | tee warm-setup.txt
+          df -h /
+          # cb preflight runs unsandboxed; scoring runs under env -i as nobody.
+          # Check the judge binary still loads its libs with a cleared env.
+          # (Copied to /tmp: nobody can't traverse the runner's home.)
+          cp "challenges/$SLUG/.bin/reference" /tmp/ref-check && chmod a+rx /tmp/ref-check
+          sudo -u nobody env -i PATH=/usr/local/bin:/usr/bin:/bin HOME=/tmp /tmp/ref-check digest /dev/null
+          echo "reference loads in a cleared env as nobody"
+      - name: Save cabal store (trusted manual run, judge code only so far)
+        if: steps.hs.outputs.haskell == 'true' && steps.hs.outputs.cache-hit != 'true'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ steps.hs.outputs.cabal-store }}
+          key: ${{ steps.hs.outputs.cache-key }}
+
       - name: cb preflight
         # The Linux runner is the gate. macOS is a laptop-class report
         # (e.g. callgrind scoring is "no" there by design), so it never fails the run.
         continue-on-error: ${{ runner.os == 'macOS' }}
         run: ./target/release/cb preflight "$SLUG" --out preflight-out
-        env:
-          SLUG: ${{ inputs.slug }}
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         if: always()
         with:
           name: preflight-${{ inputs.slug }}-${{ matrix.runner }}
-          path: preflight-out/
+          path: |
+            preflight-out/
+            warm-setup.txt

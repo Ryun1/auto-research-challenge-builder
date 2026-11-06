@@ -1,0 +1,18 @@
+{
+ "source": "api.koios.rest (block_txs, tx_cbor)",
+ "fetched": "2026-11-06",
+ "blocks": 150,
+ "block_height_range": [
+  13720149,
+  14167149
+ ],
+ "epochs": [
+  645,
+  666
+ ],
+ "proto_major": [
+  11
+ ],
+ "txs": 1633,
+ "bytes": 1320410
+}

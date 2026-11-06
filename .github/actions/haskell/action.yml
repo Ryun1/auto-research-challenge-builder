@@ -1,0 +1,70 @@
+# Haskell toolchain for challenges with a cabal harness (challenges/<slug>/harness/*.cabal,
+# e.g. ledger-cbor). A no-op for every other challenge. Linux only.
+# Restores the cabal store; only trusted workflows (preflight) save it.
+name: Haskell toolchain
+description: Cardano system libs, GHC + cabal, valgrind and a restored cabal store, if the challenge needs them
+inputs:
+  slug:
+    description: challenges/<slug>
+    required: true
+outputs:
+  haskell:
+    description: "'true' if the challenge has a cabal harness"
+    value: ${{ steps.detect.outputs.haskell }}
+  cabal-store:
+    value: ${{ steps.hs.outputs.cabal-store }}
+  cache-key:
+    value: ${{ steps.detect.outputs.key }}
+  cache-hit:
+    value: ${{ steps.cache.outputs.cache-hit }}
+runs:
+  using: composite
+  steps:
+    - id: detect
+      shell: bash
+      run: |
+        [ -d "challenges/$SLUG" ] || { echo "no challenges/$SLUG"; exit 1; }
+        if compgen -G "challenges/$SLUG/harness/*.cabal" > /dev/null; then h=true; else h=false; fi
+        echo "haskell=$h" | tee -a "$GITHUB_OUTPUT"
+        echo "key=cabal-$SLUG-$(sha256sum "challenges/$SLUG/setup.sh" 2>/dev/null | cut -c1-16)" >> "$GITHUB_OUTPUT"
+      env:
+        SLUG: ${{ inputs.slug }}
+    - name: Free disk space (as cardano-ledger's CI does)
+      if: steps.detect.outputs.haskell == 'true'
+      shell: bash
+      run: |
+        sudo rm -rf /opt/google/chrome /opt/microsoft/msedge /opt/microsoft/powershell /opt/pipx \
+          /usr/lib/mono /usr/local/julia* /usr/local/lib/android /usr/local/lib/node_modules \
+          /usr/local/share/chromium /usr/local/share/powershell /usr/share/dotnet /usr/share/swift
+        sudo apt-get install -y -qq valgrind rsync
+        df -h /
+    - name: System deps (libsodium, secp256k1, blst)
+      if: steps.detect.outputs.haskell == 'true'
+      uses: input-output-hk/actions/base@fc5641d3c3a9d5941bbad5a623236d799b521d9f
+      with:
+        use-sodium-vrf: false
+    - name: Register the Cardano libs with the loader
+      # The base action exposes them only via LD_LIBRARY_PATH, which cb's
+      # sandbox (env -i, as nobody) drops: sandboxed verify/score would fail
+      # to load libsodium. ldconfig makes them visible to every process.
+      if: steps.detect.outputs.haskell == 'true'
+      shell: bash
+      run: |
+        echo /usr/local/opt/cardano/lib | sudo tee /etc/ld.so.conf.d/cardano.conf
+        sudo ldconfig
+        ldconfig -p | grep -E 'libsodium|libsecp256k1|libblst'
+    - name: GHC + cabal
+      id: hs
+      if: steps.detect.outputs.haskell == 'true'
+      uses: input-output-hk/actions/haskell@fc5641d3c3a9d5941bbad5a623236d799b521d9f
+      with:
+        ghc-version: "9.6.7"
+        cabal-version: "3.16"
+    - name: Restore cabal store
+      id: cache
+      if: steps.detect.outputs.haskell == 'true'
+      uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        path: ${{ steps.hs.outputs.cabal-store }}
+        key: ${{ steps.detect.outputs.key }}
+        restore-keys: cabal-${{ inputs.slug }}-

@@ -72,7 +72,8 @@ jobs:
       matrix:
         n: [1, 2]
     runs-on: ${{ needs.detect.outputs.runner }}
-    timeout-minutes: 90
+    # Haskell challenges rebuild the ledger packages against the candidate.
+    timeout-minutes: 150
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -80,11 +81,15 @@ jobs:
       - run: rustup toolchain install
       - if: needs.detect.outputs.kit == 'rust'
         run: sudo apt-get install -y -qq valgrind
+      - uses: ./.github/actions/haskell
+        with:
+          slug: ${{ needs.detect.outputs.slug }}
       - run: cargo build --locked --release
       - run: ./target/release/cb score "$SLUG" $([ "$STAGE" = baseline ] && echo --baseline) --sandbox --out score.json
         env:
           SLUG: ${{ needs.detect.outputs.slug }}
           STAGE: ${{ needs.detect.outputs.stage }}
+          CB_POOL: fresh # each of the two runs fetches its own fresh pool
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: score-${{ matrix.n }}
