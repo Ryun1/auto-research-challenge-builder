@@ -33,4 +33,11 @@ jobs:
       - name: cb preflight every challenge
         run: |
           cargo build --locked --release
-          for d in challenges/*/; do ./target/release/cb preflight "$(basename "$d")"; done
+          for d in challenges/*/; do
+            # Cabal-harness challenges (e.g. ledger-cbor) need the Haskell toolchain
+            # and a ~36 min cold build: the manual Preflight workflow covers them.
+            if compgen -G "$d/harness/*.cabal" > /dev/null; then
+              echo "skip $(basename "$d"): Haskell challenge, run the Preflight workflow"; continue
+            fi
+            ./target/release/cb preflight "$(basename "$d")"
+          done
