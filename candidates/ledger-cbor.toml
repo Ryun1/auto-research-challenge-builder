@@ -1,0 +1,66 @@
+# Draft 2026-11-06. Spike in flight: run 42294073486 (branch spike/ledger-cbor)
+# decides peaks, laptop, eval_cost and noise. Values marked "estimate" are unmeasured.
+[candidate]
+slug = "ledger-cbor"
+title = "Cardano ledger: faster Conway CBOR decoding (cardano-ledger, Haskell)"
+family = "perf"
+direction = "minimise"
+category = "haskell"
+url = "https://github.com/IntersectMBO/cardano-ledger"
+# Proposed: decoding modules in cardano-ledger-binary + Conway DecCBOR instances.
+# No cabal files, FFI, Template Haskell or unsafe* (banned-token policy to write).
+editable = ["libs/cardano-ledger-binary/src/Cardano/Ledger/Binary/Decoding/", "eras/conway/impl/src/"]
+
+[gates.verifiable]
+pass = true
+evidence = "three-part oracle vs the pinned reference decoder: equal decoded values (Eq instances), byte-exact re-encoding / identical tx hashes, and identical accept/reject on a mutated-CBOR corpus (corpus not built yet). Re-encode check implemented in the spike"
+
+[gates.scalar_objective]
+pass = true
+evidence = "Callgrind Ir per pass over a seeded sample of mainnet Conway txs; paired wall time must not regress. Determinism under GHC's RTS: spike run 42294073486"
+
+[gates.bounded]
+pass = true
+evidence = "decoding 932 txs (622 KB) is sub-second natively (estimate); cold build is the long pole, cached after"
+
+[gates.baseline]
+pass = true
+evidence = "cardano-ledger @ 7827506 (master, 2026-11-06), Apache-2.0"
+
+[scores.expert_scarcity]
+value = 4
+evidence = "Haskell performance work (GHC Core, cborg, allocation tuning) is a scarce skill; agents are weaker in Haskell than Rust (estimate)"
+
+[scores.headroom]
+value = 3
+evidence = "no published decode benchmarks found (searched 2026-11-06); Annotator/MemoBytes keeps original bytes, which suggests slack but is unmeasured. Rust pallas on the same corpus would give a bound"
+
+[scores.eval_cost]
+value = 2
+evidence = "estimate: full ledger dependency tree incl. plutus-core; cardano-ledger CI needs disk cleanup to build on ubuntu-latest. Spike measures cold + cached"
+
+[scores.noise]
+value = 4
+evidence = "estimate: Ir count with +RTS -N1 should be near-deterministic; GC scheduling may add small spread. Spike runs each count twice"
+
+[scores.gaming_resistance]
+value = 4
+evidence = "salted mainnet sample from a large pool, reject-parity corpus, banned tokens; risk: a decoder that accepts more is a consensus bug, so reject parity is a hard gate"
+
+[scores.fidelity]
+value = 5
+evidence = "the decoders cardano-node runs on every block and mempool tx"
+
+[scores.value]
+value = 3
+evidence = "real node hot path for Cardano; indirect for Starknet (demo of the builder on another ecosystem)"
+
+[scores.decomposability]
+value = 4
+evidence = "primitive decoders, map/set decoding, Annotator byte slicing, per-field instances: independent steps"
+
+[scores.prior_art]
+value = 3
+evidence = "cborg internals, ledger issue tracker; pallas/Amaru (Rust) decoders as comparison points"
+
+# [laptop] and [peaks]: fill from spike run 42294073486.

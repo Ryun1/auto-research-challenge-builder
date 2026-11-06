@@ -1,0 +1,13 @@
+candidate/ and baseline/ are copies of libs/cardano-ledger-binary from
+cardano-ledger at commit 7827506b7518284d7f9dbbe3502a20431e513fe9,
+https://github.com/IntersectMBO/cardano-ledger
+
+Copyright 2018-2023 Input Output Global Inc (IOG).
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use these files except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+corpus/pool.hex.gz holds public Cardano mainnet transactions fetched from
+api.koios.rest on 2026-11-06.

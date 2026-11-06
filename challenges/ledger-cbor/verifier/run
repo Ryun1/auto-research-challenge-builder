@@ -1,0 +1,6 @@
+#!/usr/bin/env bash
+# Same decoded values, same re-encoded bytes, same accept/reject as the
+# pristine reference, on CB_SEED-salted mainnet txs + mutants + edge cases.
+set -euo pipefail
+cd "$(dirname "$0")/.."
+exec python3 verifier/judge.py verify

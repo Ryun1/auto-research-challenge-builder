@@ -1,0 +1,28 @@
+# Faster Conway CBOR decoding in cardano-ledger (IntersectMBO/cardano-ledger @ 7827506).
+[challenge]
+slug      = "ledger-cbor"
+family    = "perf"
+direction = "maximise"
+status    = "draft"          # draft | open | closed
+runner    = "ubuntu-24.04"   # pinned image
+
+[paths]
+editable  = ["candidate/"]   # a copy of cardano-ledger-binary; build.sh lets only src/ change
+max_bytes = 1048576          # baseline ~520 KB
+
+[commands]
+setup  = "./setup.sh"
+build  = "./build.sh"     # the only step that treats submission bytes as code
+verify = "./verifier/run"  # exit 0 + JSON {ok, detail}
+score  = "./bench/run"     # JSON {metrics: {...}}
+
+[objective]
+expr                 = "speedup"
+min_improvement_bips = 100  # 1% fewer instructions; spike run 42294073486 checks Ir determinism
+
+[perf]
+blocks = 4             # mirrored BCCB/CBBC blocks
+max_dispersion = 0.08  # rel-MAD cap per side (provably.fast v3)
+
+[inputs]
+salted = true  # seed drawn by the harness after the build, recorded after
