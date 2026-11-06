@@ -6,8 +6,9 @@ build-type: Simple
 executable ledger-cbor-harness
   main-is: Main.hs
   default-language: Haskell2010
-  -- no full laziness: keep repeated decodes inside the loop
-  ghc-options: -O2 -fno-full-laziness
+  -- no full laziness: keep repeated decodes inside the loop.
+  -- -V0: no RTS timer ticks, so Callgrind counts don't depend on wall time.
+  ghc-options: -O2 -fno-full-laziness "-with-rtsopts=-V0"
   build-depends:
     base,
     base16-bytestring,
@@ -17,4 +18,3 @@ executable ledger-cbor-harness
     cardano-ledger-conway,
     cardano-ledger-core,
     deepseq,
-    text,

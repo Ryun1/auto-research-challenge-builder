@@ -50,22 +50,22 @@ def verify(seed):
     cases += [("edge", b""), ("edge", b"\x00"), ("edge", by_len[0]), ("edge", by_len[-1])]
     path = write([t for _, t in cases])
     ref, cand = digest(REF, path), digest(CAND, path)
-    if any(r == "err" for (k, _), r in zip(cases, ref) if k == "valid"):
+    if any(not r.startswith("ok ") for (k, _), r in zip(cases, ref) if k == "valid"):
         return {"ok": False, "detail": "infra: reference rejected a mainnet tx"}
     if len(cand) != len(cases):
         return {"ok": False, "detail": f"candidate printed {len(cand)} lines for {len(cases)} inputs"}
     bad = [(i, k, r, c) for i, ((k, _), r, c) in enumerate(zip(cases, ref, cand)) if r != c]
-    rejected = sum(r == "err" for r in ref)
+    rejected = sum(not r.startswith("ok ") for r in ref)
     detail = f"{len(cases)} inputs ({rejected} rejected by reference): {len(bad)} differ"
     if bad:
         detail += "; first: " + ", ".join(f"#{i} {k} ref={r[:12]} cand={c[:12]}" for i, k, r, c in bad[:3])
     return {"ok": not bad, "detail": detail}
 
 
-def instructions(exe, path):
+def instructions(exe, path, reps):
     with tempfile.NamedTemporaryFile(suffix=".cg") as out:
         subprocess.run(["valgrind", "--tool=callgrind", f"--callgrind-out-file={out.name}",
-                        str(exe), "decode", path, "1"], check=True, capture_output=True, timeout=1800)
+                        str(exe), "decode", path, str(reps)], check=True, capture_output=True, timeout=1800)
         m = re.search(rb"^(?:summary|totals): (\d+)", Path(out.name).read_bytes(), re.M)
         return int(m.group(1))
 
@@ -77,10 +77,10 @@ def rel_mad(xs):
 
 def score(seed):
     sample = write(random.Random(seed ^ 0x5C0E).sample(pool(), SCORE_N))
-    empty = write([])
-    # Instructions for decoding the sample once, process start-up subtracted.
-    ic = instructions(CAND, sample) - instructions(CAND, empty)
-    ir = instructions(REF, sample) - instructions(REF, empty)
+    # Instructions for decoding the sample once; start-up and reading the hex
+    # input (the 0-pass run) subtracted.
+    ic = instructions(CAND, sample, 1) - instructions(CAND, sample, 0)
+    ir = instructions(REF, sample, 1) - instructions(REF, sample, 0)
     blocks = int(os.environ.get("CB_PERF_BLOCKS", 4))
     max_disp = float(os.environ.get("CB_PERF_MAX_DISPERSION", 0.08))
 

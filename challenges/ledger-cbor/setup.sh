@@ -27,11 +27,14 @@ cp -R baseline .ledger/cand-binary  # planning stand-in; build.sh swaps in candi
 
 # Two projects over the same clone. Both drop upstream's dev-only +asserts flags
 # (the node's release build has none); the candidate one swaps in cand-binary.
-extra=$'\npackages: ledger-cbor-harness\n\npackage cardano-crypto-praos\n  flags: -external-libsodium-vrf\n'
+# Additions go in <project>.local, which cabal merges (as the spike does).
 sed '/flags: +asserts/d' .ledger/cabal.project > .ledger/cabal.project.ref
-printf '%s' "$extra" >> .ledger/cabal.project.ref
 sed 's#^  libs/cardano-ledger-binary$#  cand-binary#' .ledger/cabal.project.ref > .ledger/cabal.project.cand
 grep -q '^  cand-binary$' .ledger/cabal.project.cand
+for p in ref cand; do
+  printf 'packages: ledger-cbor-harness\n\npackage cardano-crypto-praos\n  flags: -external-libsodium-vrf\n' \
+    > ".ledger/cabal.project.$p.local"
+done
 
 cd .ledger
 cabal update -v0

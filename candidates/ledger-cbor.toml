@@ -7,13 +7,12 @@ family = "perf"
 direction = "minimise"
 category = "haskell"
 url = "https://github.com/IntersectMBO/cardano-ledger"
-# Proposed: decoding modules in cardano-ledger-binary + Conway DecCBOR instances.
-# No cabal files, FFI, Template Haskell or unsafe* (banned-token policy to write).
-editable = ["libs/cardano-ledger-binary/src/Cardano/Ledger/Binary/Decoding/", "eras/conway/impl/src/"]
+# challenges/ledger-cbor: token policy in build.sh (no FFI, new unsafe*, runRW#, TH, CPP, IO).
+editable = ["libs/cardano-ledger-binary/src/"]  # v1: binary package only; Conway instances frozen
 
 [gates.verifiable]
 pass = true
-evidence = "three-part oracle vs the pinned reference decoder: equal decoded values (Eq instances), byte-exact re-encoding / identical tx hashes, and identical accept/reject on a mutated-CBOR corpus (corpus not built yet). Re-encode check implemented in the spike"
+evidence = "three-part oracle vs the pinned reference decoder, per input: same show of the decoded tx, same re-encoded bytes (hashed), and same accept/reject on seeded mutants (truncate/flip/append/prefix), in challenges/ledger-cbor/verifier/judge.py; not yet run against a real build"
 
 [gates.scalar_objective]
 pass = true
