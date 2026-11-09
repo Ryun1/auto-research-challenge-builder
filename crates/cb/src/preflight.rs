@@ -13,6 +13,7 @@ use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
 
 /// Broken candidates every challenge must ship, each of which must fail verify.
+/// A challenge may add more under `preflight/broken/` (see `broken_variants`).
 pub const BROKEN: [&str; 3] = ["off-by-one", "partial", "constant"];
 /// provably.fast runs three no-change sessions (campaign_freeze.py:3201).
 const AA_SESSIONS: usize = 3;
@@ -336,6 +337,23 @@ pub fn tree_bytes(dir: &Path) -> u64 {
 /// Copies the challenge to a scratch dir whose editable surface is the
 /// baseline with each of `overlays` copied on top, in order. Broken variants
 /// ship only the files they change.
+/// The required broken variants, then any other directory under
+/// `preflight/broken/` (sorted): a challenge-specific cheat its verifier must catch.
+fn broken_variants(dir: &Path) -> Vec<String> {
+    let mut names: Vec<String> = BROKEN.iter().map(|n| n.to_string()).collect();
+    let mut extra: Vec<String> = std::fs::read_dir(dir.join("preflight/broken"))
+        .into_iter()
+        .flatten()
+        .flatten()
+        .filter(|e| e.path().is_dir())
+        .filter_map(|e| e.file_name().into_string().ok())
+        .filter(|n| !names.contains(n))
+        .collect();
+    extra.sort();
+    names.extend(extra);
+    names
+}
+
 fn workspace(
     dir: &Path,
     editable: &str,
@@ -575,7 +593,7 @@ pub fn run_all(dir: &Path) -> Result<Report, String> {
     }
 
     // Deliberately broken candidates must build and then fail verify.
-    for name in BROKEN {
+    for name in &broken_variants(dir) {
         let src = dir.join("preflight/broken").join(name);
         if !src.is_dir() {
             r.push(
@@ -726,8 +744,13 @@ mod tests {
 
     /// A toy challenge: the answer file must hold 42; score reports a metric.
     fn toy(family: &str, verifier_accepts_anything: bool) -> PathBuf {
+        toy_in("", family, verifier_accepts_anything)
+    }
+
+    /// `tag` keeps tests that change their toy apart: tests run in parallel.
+    fn toy_in(tag: &str, family: &str, verifier_accepts_anything: bool) -> PathBuf {
         let root = std::env::temp_dir().join(format!(
-            "cb-pf-{}-{family}-{verifier_accepts_anything}",
+            "cb-pf-{}-{family}-{verifier_accepts_anything}{tag}",
             std::process::id()
         ));
         let _ = std::fs::remove_dir_all(&root);
@@ -792,6 +815,20 @@ mod tests {
         for name in BROKEN {
             assert_eq!(status(&r, &format!("broken: {name}")), Status::Fail);
         }
+    }
+
+    #[test]
+    fn extra_broken_variants_are_run() {
+        let dir = toy_in("-extra", "resource", false);
+        std::fs::create_dir_all(dir.join("preflight/broken/lazy")).unwrap();
+        std::fs::write(dir.join("preflight/broken/lazy/answer"), "40\n").unwrap();
+        let r = run_all(&dir).unwrap();
+        assert_eq!(status(&r, "broken: lazy"), Status::Pass);
+        // One the verifier accepts blocks the challenge, like a required one.
+        std::fs::write(dir.join("preflight/broken/lazy/answer"), "42\n").unwrap();
+        let r = run_all(&dir).unwrap();
+        assert_eq!(status(&r, "broken: lazy"), Status::Fail);
+        assert!(r.blocked());
     }
 
     #[test]

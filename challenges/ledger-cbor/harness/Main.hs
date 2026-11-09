@@ -8,6 +8,8 @@
 --
 --   harness digest FILE       one line per input: "ok <show-hash> <bytes-hash>", "err" or "exc"
 --   harness decode FILE REPS  decode every input REPS times (0 = read only); prints decode seconds
+--   harness nf FILE           one line per input: "nf <unevaluated> <functions>" after the timed
+--                             pass's rnf, "nf budget" if the walk gave up, "err" or "exc"
 --
 -- FILE holds one hex-encoded transaction per line (an empty line is an empty input).
 module Main (main) where
@@ -24,6 +26,7 @@ import qualified Data.ByteString.Base16 as B16
 import qualified Data.ByteString.Char8 as BS8
 import qualified Data.ByteString.Lazy as BSL
 import GHC.Clock (getMonotonicTime)
+import HeapWalk (unevaluated)
 import System.Environment (getArgs)
 
 -- Mainnet's current protocol version (Conway, PV 11).
@@ -57,6 +60,19 @@ main = do
         -- a decoder that throws instead of returning Left is still compared
         r <- try (evaluate (force (digestLine b)))
         putStrLn $ either (\(_ :: SomeException) -> "exc") id r
+    ["nf", path] -> do
+      -- What the timed pass leaves behind: decode and rnf exactly as "decode"
+      -- does, then count what rnf did not evaluate. Judge-owned: no NFData or
+      -- NoThunks instance (some are the candidate's) is trusted here.
+      txs <- readInputs path
+      forM_ txs $ \b -> do
+        r <- try $ case decodeTx b of
+          Left _ -> pure "err"
+          Right t -> do
+            let tx = unwrapMempoolTx t
+            evaluate (rnf tx)
+            maybe "nf budget" (\(th, fn) -> "nf " <> show th <> " " <> show fn) <$> unevaluated tx
+        putStrLn $ either (\(_ :: SomeException) -> "exc") id r
     ["decode", path, reps] -> do
       txs <- readInputs path
       BS.length (BS.concat txs) `seq` pure ()
@@ -67,4 +83,4 @@ main = do
           Right t -> pure $! rnf (unwrapMempoolTx t)
       t1 <- getMonotonicTime
       print (t1 - t0)
-    _ -> fail "usage: harness digest FILE | harness decode FILE REPS"
+    _ -> fail "usage: harness digest FILE | harness decode FILE REPS | harness nf FILE"

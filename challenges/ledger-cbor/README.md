@@ -14,12 +14,18 @@ Status: **draft**. It hasn't been built end to end yet: spike run
 | `harness/` | judge exe, built against the reference and against the candidate |
 | `corpus/pool.hex.gz` | 1,633 mainnet Conway txs (Koios, epochs 645-666, PV 11); see `pool.json` |
 | `verifier/judge.py` | verify (values, bytes, accept/reject parity) and score |
-| `preflight/broken/` | off-by-one (accepts 1 trailing byte), partial (gives up on txs > 1000 bytes), constant (rejects all) |
+| `preflight/broken/` | off-by-one (accepts 1 trailing byte), partial (gives up on txs > 1000 bytes), constant (rejects all), lazy (leaves every output unevaluated behind its own `rnf`) |
 
 **Correct** means the same as the pristine reference on every input: the same
 `show` of the decoded tx, the same re-encoded bytes, and the same accept/reject
 on truncated, bit-flipped, extended and re-tagged mutants. A decoder that
 accepts more is a consensus bug, not a speedup.
+
+The txs that get timed are verified too, with the same seed. And because the
+timed pass forces a decoded tx with `rnf`, whose instance for `Sized` is in
+`candidate/`, verify repeats that decode + `rnf` and walks the heap with
+judge code (`harness/HeapWalk.hs`): nothing may be left unevaluated, and the
+value may hold no more function closures than the reference's.
 
 **Score.** Callgrind instructions to decode 800 seeded txs once, minus a 0-pass
 run (start-up plus reading the input). The RTS timer is off (`-V0`), so counts are deterministic: `speedup = reference / candidate`. A paired wall-time run guards
