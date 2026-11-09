@@ -5,7 +5,7 @@
 slug = "ledger-cbor"
 title = "Cardano ledger: faster Conway CBOR decoding (cardano-ledger, Haskell)"
 family = "perf"
-direction = "minimise"
+direction = "minimise"  # the raw metric (Ir); challenge.toml maximises speedup = ref/cand
 category = "haskell"
 url = "https://github.com/IntersectMBO/cardano-ledger"
 # challenges/ledger-cbor: token policy in build.sh (no FFI, new unsafe*, runRW#, TH, CPP, IO).

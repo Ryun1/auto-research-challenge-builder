@@ -632,7 +632,9 @@ pub fn record(root: &Path, slug: &str, runs: &[Value], a: &Attempt) -> Result<Va
         "expr": spec.objective.expr, "value": if values.iter().all(Option::is_some) { json!(mean) } else { Value::Null },
         "record_before": record_value,
         "runs": runs.iter().map(|r| json!({"seed": r["seed"], "host": r["host"], "host_policy": r["host_policy"], "value": r["value"], "status": r["status"],
-                                           "metrics": r["metrics"], "sandboxed": r["sandboxed"], "paired": r["paired"]})).collect::<Vec<_>>(),
+                                           "metrics": r["metrics"], "sandboxed": r["sandboxed"], "paired": r["paired"],
+                                           // which inputs were scored (e.g. a fresh pool's provenance)
+                                           "verify_detail": r["verify"]["detail"]})).collect::<Vec<_>>(),
     });
     let path = results_path(root, slug);
     let mut line = serde_json::to_string(&entry).map_err(|e| e.to_string())?;

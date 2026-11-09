@@ -12,5 +12,8 @@ You may obtain a copy of the License at
 
     http://www.apache.org/licenses/LICENSE-2.0
 
+The full text is in LICENSE (copied from the root of cardano-ledger at the
+same commit).
+
 corpus/pool.hex.gz holds public Cardano mainnet transactions fetched from
 api.koios.rest on 2026-11-06.
