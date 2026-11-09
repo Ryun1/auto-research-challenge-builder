@@ -1,0 +1,18 @@
+# Comparison decoder for #57 (headroom): pallas on the same txs as the judge.
+# Not part of the judge; built only by the Measure workflow.
+[package]
+name = "pallas-decode"
+version = "0.0.0"
+edition = "2021"
+publish = false
+
+[workspace]
+
+[dependencies]
+hex = "0.4"
+pallas-codec = "1"
+pallas-crypto = "1"
+pallas-primitives = "1"
+
+[profile.release]
+debug = 1 # symbols for callgrind attribution

@@ -1,0 +1,91 @@
+# Measurements for #57, not a judge: is there headroom in ledger-cbor (pallas on
+# the same txs, and where the reference spends its instructions), and would two
+# promotion runs on different fresh pools agree within the bar?
+# Runs on pushes to measure/ledger-cbor, or by hand.
+name: Measure ledger-cbor
+
+on:
+  push:
+    branches: [measure/ledger-cbor]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  C: challenges/ledger-cbor
+
+jobs:
+  # A few minutes: fails before the long job if the Callgrind parser or pallas is wrong.
+  parser:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - run: rustup toolchain install
+      - run: sudo apt-get install -y -qq valgrind
+      - run: cargo build --release --locked --manifest-path "$C/measure/pallas/Cargo.toml" --target-dir /tmp/pallas
+      - name: pallas accepts the repo pool; parser self-test
+        run: |
+          gunzip -c "$C/corpus/pool.hex.gz" > /tmp/pool.hex
+          /tmp/pallas/release/pallas-decode check /tmp/pool.hex
+          python3 "$C/measure/measure.py" selftest /tmp/pallas/release/pallas-decode /tmp/pool.hex
+
+  measure:
+    needs: parser
+    runs-on: ubuntu-24.04
+    timeout-minutes: 150
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - run: rustup toolchain install
+      - run: cargo build --release --locked --manifest-path "$C/measure/pallas/Cargo.toml" --target-dir /tmp/pallas
+      - uses: ./.github/actions/haskell
+        with:
+          slug: ledger-cbor
+      - name: Build the reference (repo pool)
+        run: |
+          start=$(date +%s)
+          "$C/setup.sh"
+          echo "setup: $(( ($(date +%s) - start) / 60 )) min"
+      - name: Fetch fresh pools (Koios)
+        run: |
+          mkdir pools
+          for i in 1 2 3 4 5; do
+            python3 "$C/verifier/pool.py" "pools/fresh$i" || echo "::warning::pool $i not fetched"
+            sleep 5
+          done
+          [ "$(ls pools/*.hex.gz | wc -l)" -ge 2 ] || { echo "need at least 2 fresh pools"; exit 1; }
+      - name: Native wall time, whole repo pool
+        run: |
+          gunzip -c "$C/corpus/pool.hex.gz" > /tmp/pool.hex
+          {
+            echo "## Native wall time (1,633 txs x 50 passes, this runner)"
+            echo
+            echo '```'
+            for i in 1 2 3; do
+              echo "reference   $("$C/.bin/reference" decode /tmp/pool.hex 50) s"
+              echo "pallas      $(/tmp/pallas/release/pallas-decode decode /tmp/pool.hex 50) s"
+              echo "pallas+hash $(/tmp/pallas/release/pallas-decode decode-hash /tmp/pool.hex 50) s"
+            done
+            echo '```'
+            echo
+          } | tee wall.md
+      - name: Collect
+        run: python3 "$C/measure/measure.py" collect --pools pools --pallas /tmp/pallas/release/pallas-decode --seeds 10 --out measure.json
+      - name: Report
+        run: |
+          python3 "$C/measure/measure.py" report measure.json > report.md
+          cat wall.md >> report.md
+          cat report.md >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        if: always()
+        with:
+          name: measure-ledger-cbor
+          path: |
+            measure.json
+            report.md
+            pools/*.json
