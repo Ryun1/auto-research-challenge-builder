@@ -231,14 +231,27 @@ pub(crate) fn run_in(
             }
         }
     };
-    // ponytail: poll loop; stdout/stderr are read after exit, so a command
-    // writing >64 KiB blocks until the timeout. Fine for JSON-sized output.
-    let out = loop {
+    // Drain both pipes while waiting: a command that writes more than a pipe
+    // buffer (64 KiB) would otherwise block until the timeout (a verbose
+    // cabal build did, preflight 42302837449).
+    let drain = |pipe: Option<Box<dyn std::io::Read + Send>>| {
+        std::thread::spawn(move || {
+            let mut buf = Vec::new();
+            if let Some(mut p) = pipe {
+                let _ = p.read_to_end(&mut buf);
+            }
+            buf
+        })
+    };
+    let out_t = drain(child.stdout.take().map(|p| Box::new(p) as _));
+    let err_t = drain(child.stderr.take().map(|p| Box::new(p) as _));
+    let status = loop {
         match child.try_wait() {
-            Ok(Some(_)) => break child.wait_with_output(),
+            Ok(Some(status)) => break status,
             Ok(None) if start.elapsed() > TIMEOUT => {
                 let _ = child.kill();
                 let _ = child.wait();
+                // Not joined: a surviving grandchild may hold the pipes open.
                 return Run {
                     ok: false,
                     stdout: String::new(),
@@ -258,27 +271,19 @@ pub(crate) fn run_in(
         }
     };
     let secs = start.elapsed().as_secs_f64();
-    match out {
-        Ok(o) => {
-            let stderr = String::from_utf8_lossy(&o.stderr);
-            let tail: Vec<&str> = stderr.lines().rev().take(3).collect();
-            Run {
-                ok: o.status.success(),
-                stdout: String::from_utf8_lossy(&o.stdout).into_owned(),
-                secs,
-                detail: format!(
-                    "{} {}",
-                    o.status,
-                    tail.into_iter().rev().collect::<Vec<_>>().join(" | ")
-                ),
-            }
-        }
-        Err(e) => Run {
-            ok: false,
-            stdout: String::new(),
-            secs,
-            detail: e.to_string(),
-        },
+    let stdout = out_t.join().unwrap_or_default();
+    let stderr = err_t.join().unwrap_or_default();
+    let stderr = String::from_utf8_lossy(&stderr);
+    let tail: Vec<&str> = stderr.lines().rev().take(3).collect();
+    Run {
+        ok: status.success(),
+        stdout: String::from_utf8_lossy(&stdout).into_owned(),
+        secs,
+        detail: format!(
+            "{} {}",
+            status,
+            tail.into_iter().rev().collect::<Vec<_>>().join(" | ")
+        ),
     }
 }
 
@@ -699,6 +704,23 @@ pub fn render(r: &Report) -> String {
 mod tests {
     use super::*;
     use crate::challenge::scaffold;
+
+    /// Output bigger than a pipe buffer must not block until the timeout.
+    #[test]
+    fn large_output_does_not_block() {
+        let dir = crate::paths::scratch("bigout");
+        std::fs::create_dir_all(&dir).unwrap();
+        let r = run(
+            &[],
+            &dir,
+            "head -c 1000000 /dev/zero | tr '\\0' x; head -c 1000000 /dev/zero >&2; echo done >&2",
+            0,
+        );
+        assert!(r.ok, "{}", r.detail);
+        assert_eq!(r.stdout.len(), 1_000_000);
+        assert!(r.detail.ends_with("done"), "{}", r.detail);
+        assert!(r.secs < 30.0, "took {}s", r.secs);
+    }
 
     const TM: &str = "# Threat model\n\n## How could a wrong answer pass the verifier?\n\n- Finite inputs: fresh per run\n\n## Interface\n\nmatches\n\n## Headroom\n\nunknown, see #6\n\n## Outlier\n\nmanual review by maintainer\n";
 
