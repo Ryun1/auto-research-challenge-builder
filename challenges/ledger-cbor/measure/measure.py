@@ -111,11 +111,11 @@ def zdecode(s):
 
 
 def region(sym):
-    """(package, module) of a GHC code symbol `<pkg>_<Module>_<name>_info`. RTS and C
-    code has no z-encoded module: ('rts+c', symbol)."""
+    """(package, module) of a GHC code symbol `<pkg>_<Module>_<name>_info` (or `_slow`,
+    a function's slow entry). RTS and C code has no z-encoded module: ('rts+c', symbol)."""
     pkg, _, rest = sym.partition("_")
     mod = rest.partition("_")[0]
-    if not (sym.endswith("_info") and mod[:1].isupper() and rest.count("_") >= 2):
+    if not (sym.endswith(("_info", "_slow")) and mod[:1].isupper() and rest.count("_") >= 2) or pkg == "stg":
         return "rts+c", sym
     return re.sub(r"-\d+(\.\d+)*(-[A-Za-z0-9]+)*$", "", zdecode(pkg)), zdecode(mod)
 
@@ -223,6 +223,13 @@ def disagreement(pairs):
 def report(path, bips):
     m = json.loads(Path(path).read_text())
     S = m["samples"]
+    for s in S:  # re-file with the current region(): rts+c keys keep the whole symbol
+        agg = collections.Counter()
+        for k, v in s["regions"].items():
+            pk, _, md = k.partition("|")
+            pk, md = ("rts+c", f"stg_{md}") if pk == "stg" else region(md) if pk == "rts+c" else (pk, md)
+            agg[f"{pk}|{md}"] += v
+        s["regions"] = dict(agg)
     seeded = [s for s in S if s["seed"] is not None]
     whole = [s for s in S if s["seed"] is None]
     pools = sorted({s["pool"] for s in S}, key=lambda p: (p != "repo", p))
@@ -286,7 +293,7 @@ def report(path, bips):
         order = lambda d: sorted(d.items(), key=lambda kv: -statistics.fmean(kv[1]))
         # a module that is its whole package adds nothing
         return order(pk) + [(k, v) for k, v in order(md)
-                            if not any(abs(statistics.fmean(v) - statistics.fmean(pv)) < 1e-9 and k.startswith(pn)
+                            if not any(statistics.fmean(v) > 0.95 * statistics.fmean(pv) and k.startswith(pn + ":")
                                        for pn, pv in pk.items())]
 
     w("\n## Would two promotion runs agree?\n")
