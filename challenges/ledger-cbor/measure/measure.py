@@ -276,12 +276,25 @@ def report(path, bips):
     for k, v in sorted(mod.items(), key=lambda kv: -statistics.fmean(kv[1]))[:15]:
         w(f"| {k} | {statistics.fmean(v):.1%} |")
 
-    # Promotion agreement. Regions = packages with a mean share of 2% or more.
+    # Promotion agreement. Regions = packages and modules with a mean share of 2% or more.
+    # A real change touches a few functions, not a whole package, and a narrow region's
+    # share moves more between samples than a package's: the module rows are the
+    # closer model, and still an under-estimate for a change to one function.
+    def regions(samples):
+        big = lambda d: {k: v for k, v in d.items() if statistics.fmean(v) >= 0.02}
+        pk, md = big(shares(samples, lambda r: r.split("|")[0])), big(shares(samples, lambda r: r.replace("|", ": ")))
+        order = lambda d: sorted(d.items(), key=lambda kv: -statistics.fmean(kv[1]))
+        # a module that is its whole package adds nothing
+        return order(pk) + [(k, v) for k, v in order(md)
+                            if not any(abs(statistics.fmean(v) - statistics.fmean(pv)) < 1e-9 and k.startswith(pn)
+                                       for pn, pv in pk.items())]
+
     w("\n## Would two promotion runs agree?\n")
-    w(f"`cb record` needs |x - y| / x <= {half:.2%} (half of `min_improvement_bips = {bips}`). A candidate "
-      "that removes a fraction of one package's instructions scores differently on each sample, because "
-      "that package's share differs. For each package and each mean gain, the table gives the 95th "
-      "percentile and the largest gap between two runs, and how often the gap exceeds the limit.\n")
+    w(f"`cb record` needs |x - y| / x <= {half:.2%} (half of `min_improvement_bips = {bips}`). Model: a candidate "
+      "removes the same fraction of one region's instructions in every sample, so it scores "
+      "1/(1 - f*share), and the region's share differs per sample. Regions are packages, then single "
+      "modules (`package: module`; for `rts+c`, single functions). For each region and mean gain: the 95th "
+      "percentile and largest gap between two runs, and how often the gap exceeds the limit.\n")
     # promote.yml only ever scores fresh pools; keep the repo pool out of pool-to-pool pairs if we can.
     n_fresh = len([p for p in pools if p != "repo"])
     fresh_only = lambda s: n_fresh < 2 or s["pool"] != "repo"
@@ -299,11 +312,9 @@ def report(path, bips):
     worst = {}
     for title, pick in kinds:
         w(f"### {title}\n")
-        w("| package (mean share) | " + " | ".join(f"+{g:.0%} gain" for g in GAINS) + " |")
+        w("| region (mean share) | " + " | ".join(f"+{g:.0%} gain" for g in GAINS) + " |")
         w("|---|" + "--:|" * len(GAINS))
-        for k, v in sorted(pkg.items(), key=lambda kv: -statistics.fmean(kv[1])):
-            if statistics.fmean(v) < 0.02:
-                continue
+        for k, v in regions(seeded):
             cells = []
             for g in GAINS:
                 f = frac_for_gain(v, g)
@@ -316,7 +327,7 @@ def report(path, bips):
                 worst[(title, g)] = max(worst.get((title, g), 0), mx)
             w(f"| {k} ({statistics.fmean(v):.1%}) | " + " | ".join(cells) + " |")
         w("")
-    w("Largest gap seen for any package, by gain (n/a cells excluded):\n")
+    w("Largest gap seen for any region, by gain (n/a cells excluded):\n")
     w("| runs | " + " | ".join(f"+{g:.0%}" for g in GAINS) + " |")
     w("|---|" + "--:|" * len(GAINS))
     for title, _ in kinds:
@@ -325,13 +336,10 @@ def report(path, bips):
     # Scoring every tx in the pool instead of a draw: only pool-to-pool differences remain.
     whole = [s for s in whole if fresh_only(s)]
     if len(whole) > 1:
-        wp = shares(whole, lambda r: r.split("|")[0])
         w("\n### Two fresh pools, every tx scored (no draw)\n")
-        w("| package | " + " | ".join(f"+{g:.0%} max gap" for g in GAINS) + " |")
+        w("| region | " + " | ".join(f"+{g:.0%} max gap" for g in GAINS) + " |")
         w("|---|" + "--:|" * len(GAINS))
-        for k, v in sorted(wp.items(), key=lambda kv: -statistics.fmean(kv[1])):
-            if statistics.fmean(v) < 0.02:
-                continue
+        for k, v in regions(whole):
             cells = []
             for g in GAINS:
                 f = frac_for_gain(v, g)
