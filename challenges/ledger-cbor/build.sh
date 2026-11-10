@@ -52,6 +52,9 @@ grep -v '^#' packages.txt | while read -r name path; do
 done
 ( cd "$L" && cabal build -v1 --project-file=cabal.project.cand --builddir=dist-cand ledger-cbor-harness )
 cp "$(cd "$L" && cabal list-bin --project-file=cabal.project.cand --builddir=dist-cand ledger-cbor-harness)" .bin/candidate
+# cp onto an existing file keeps its mode, and the build sandbox pre-creates
+# the output 0644 (it must exist to be mounted). Verify/score run it as nobody.
+chmod 755 .bin/candidate
 
 # #53: upstream's own test suites for every editable package, against the
 # candidate (the harness only decodes Conway mempool txs at PV 11). Slow, so
