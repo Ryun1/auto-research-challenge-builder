@@ -1,5 +1,8 @@
-candidate/ and baseline/ are copies of libs/cardano-ledger-binary from
-cardano-ledger at commit 7827506b7518284d7f9dbbe3502a20431e513fe9,
+candidate/<package>/src and baseline/<package>/src are copies of the src/
+directories of the packages listed in packages.txt (cardano-ledger-binary,
+cardano-ledger-core and the shelley, allegra, mary, alonzo, babbage and conway
+era implementations) from cardano-ledger at commit
+7827506b7518284d7f9dbbe3502a20431e513fe9,
 https://github.com/IntersectMBO/cardano-ledger
 
 Copyright 2018-2023 Input Output Global Inc (IOG).

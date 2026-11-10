@@ -106,12 +106,13 @@ pub struct BuildSandbox {
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct HaskellOpts {
+    /// Source dirs relative to the editable path, each a module root.
     #[serde(default = "default_hs_src")]
-    pub src: String,
+    pub src: Vec<String>,
 }
 
-fn default_hs_src() -> String {
-    "src".into()
+fn default_hs_src() -> Vec<String> {
+    vec!["src".into()]
 }
 
 #[derive(Debug, Deserialize)]

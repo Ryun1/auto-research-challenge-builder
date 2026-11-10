@@ -98,18 +98,23 @@ const SAFE_EXTENSIONS: &[&str] = &[
     "ViewPatterns",
 ];
 
+/// Raw memory and primops: allowed only in a file whose baseline already
+/// enables them (e.g. cardano-ledger-core's Coin.hs uses UnboxedTuples).
+const BASELINE_ONLY_EXTENSIONS: &[&str] = &[
+    "MagicHash",
+    "UnboxedTuples",
+    "UnboxedSums",
+    "UnliftedNewtypes",
+    "UnliftedDatatypes",
+];
+
 /// Never allowed, even if the baseline file has them: compile-time code
-/// (TH), raw memory and primops, FFI, and Safe Haskell escape hatches.
+/// (TH), FFI, and Safe Haskell escape hatches.
 const BANNED_EXTENSIONS: &[&str] = &[
     "TemplateHaskell",
     "TemplateHaskellQuotes",
     "QuasiQuotes",
-    "MagicHash",
-    "UnboxedTuples",
-    "UnboxedSums",
     "UnliftedFFITypes",
-    "UnliftedNewtypes",
-    "UnliftedDatatypes",
     "GHCForeignImportPrim",
     "ForeignFunctionInterface",
     "CApiFFI",
@@ -120,7 +125,9 @@ const BANNED_EXTENSIONS: &[&str] = &[
     "Trustworthy",
 ];
 
-/// Modules that are never allowed: primops, raw memory, IO and processes.
+/// Modules that reach primops, raw memory, IO or processes: allowed only as
+/// an exact copy of an import declaration in the same baseline file (upstream
+/// has e.g. `import GHC.Base (Type)` and `import Debug.Trace (trace)`).
 const BANNED_MODULES: &[&str] = &[
     "GHC.Exts",
     "GHC.Prim",
@@ -469,11 +476,15 @@ pub fn check_file(
     }
     for e in extensions(&lc) {
         let bare = e.strip_prefix("No").unwrap_or(&e);
-        if BANNED_EXTENSIONS
-            .iter()
-            .any(|b| b.eq_ignore_ascii_case(bare))
-        {
+        let is = |list: &[&str]| list.iter().any(|b| b.eq_ignore_ascii_case(bare));
+        if is(BANNED_EXTENSIONS) {
             errs.push(format!("extension {e} is not allowed"));
+        } else if is(BASELINE_ONLY_EXTENSIONS) {
+            if !base_exts.contains(&e) {
+                errs.push(format!(
+                    "extension {e} is only allowed where the baseline file has it"
+                ));
+            }
         } else if !SAFE_EXTENSIONS.contains(&e.as_str()) && !base_exts.contains(&e) {
             errs.push(format!(
                 "extension {e} is not on the safe list or in the baseline file"
@@ -493,9 +504,14 @@ pub fn check_file(
     }
 
     // Imports.
+    let same_file: BTreeSet<String> = imports(&lb).into_iter().map(|(_, d)| d).collect();
     for (m, decl) in imports(&lc) {
         if BANNED_MODULES.iter().any(|b| has_prefix(&m, b)) {
-            errs.push(format!("import of {m} is not allowed"));
+            if !same_file.contains(&decl) {
+                errs.push(format!(
+                    "import of {m} is only allowed as an exact copy of this baseline file's: {decl:?}"
+                ));
+            }
         } else if local.contains(&m) || SAFE_MODULES.contains(&m.as_str()) {
         } else if SENSITIVE_PREFIXES.iter().any(|p| has_prefix(&m, p))
             || m.ends_with(".Internal")
@@ -552,13 +568,16 @@ fn module_name(rel_to_src: &Path) -> Option<String> {
     Some(s.replace('/', "."))
 }
 
-/// Checks a candidate package dir against the baseline package dir.
-/// `src` is the source subdirectory (the only part that may change).
-pub fn check(base: &Path, cand: &Path, src: &str) -> Result<(), Vec<String>> {
+/// Checks a candidate tree against the baseline tree. `srcs` are the source
+/// directories (relative), the only parts that may change; each is a module
+/// root.
+pub fn check(base: &Path, cand: &Path, srcs: &[String]) -> Result<(), Vec<String>> {
     let fb = walk(base).map_err(|e| vec![e])?;
     let fc = walk(cand).map_err(|e| vec![e])?;
     let mut errs = Vec::new();
-    let in_src = |r: &Path| r.starts_with(src);
+    let src_of = |r: &Path| srcs.iter().find(|s| r.starts_with(s.as_str())).cloned();
+    let in_src = |r: &Path| src_of(r).is_some();
+    let src = srcs.join(", ");
     for (rel, p) in &fc {
         if p.is_symlink() {
             errs.push(format!("{}: symlink", rel.display()));
@@ -583,7 +602,10 @@ pub fn check(base: &Path, cand: &Path, src: &str) -> Result<(), Vec<String>> {
     let mut base_imports = BTreeSet::new();
     let mut base_decls = BTreeSet::new();
     for (rel, p) in fb.iter().filter(|(r, _)| in_src(r)) {
-        if let Some(m) = rel.strip_prefix(src).ok().and_then(module_name) {
+        if let Some(m) = src_of(rel)
+            .and_then(|s| rel.strip_prefix(&s).ok().map(Path::to_path_buf))
+            .and_then(|r| module_name(&r))
+        {
             local.insert(m);
         }
         for (m, d) in imports(&lex(&read(p))) {
@@ -744,6 +766,21 @@ f !x = unsafeDeserialize x -- unsafe in a comment
     }
 
     #[test]
+    fn banned_but_in_the_same_baseline_file() {
+        let base = "{-# LANGUAGE UnboxedTuples #-}\nmodule M where\nimport GHC.Base (Type)\nimport Debug.Trace (trace)\n";
+        let none = BTreeSet::new();
+        let ck = |cand: &str| check_file(base, cand, &none, &none, &none);
+        assert!(ck(base).is_empty(), "{:?}", ck(base));
+        // Wider import list, or the extension's partner: refused.
+        assert!(!ck(&base.replace("GHC.Base (Type)", "GHC.Base")).is_empty());
+        assert!(!ck(&base.replace("(trace)", "(trace, traceIO)")).is_empty());
+        assert!(!ck(&base.replace("UnboxedTuples", "UnboxedTuples, MagicHash")).is_empty());
+        // Another file (no such baseline lines): refused.
+        let other = check_file("module N where\n", base, &none, &none, &none);
+        assert_eq!(other.len(), 3, "{other:?}");
+    }
+
+    #[test]
     fn tokens() {
         assert!(!errs(&with("", "g = unsafePerformIO x\n")).is_empty());
         assert!(!errs(&with("", "g = UNSAFEcoerce x\n")).is_empty());
@@ -765,12 +802,32 @@ f !x = unsafeDeserialize x -- unsafe in a comment
         assert_eq!(l.code.lines().count(), 4);
     }
 
+    /// [haskell] src from the real challenge.toml.
+    fn ledger_srcs() -> Vec<String> {
+        let ch = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../challenges/ledger-cbor");
+        crate::challenge::Spec::load(&ch).unwrap().haskell.unwrap().src
+    }
+
+    #[test]
+    fn ledger_packages_txt_matches_challenge_toml() {
+        let ch = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../challenges/ledger-cbor");
+        let Ok(txt) = std::fs::read_to_string(ch.join("packages.txt")) else {
+            return;
+        };
+        let from_txt: Vec<String> = txt
+            .lines()
+            .filter(|l| !l.trim().is_empty() && !l.starts_with('#'))
+            .map(|l| format!("{}/src", l.split_whitespace().next().unwrap()))
+            .collect();
+        assert_eq!(from_txt, ledger_srcs());
+    }
+
     #[test]
     fn real_baseline_is_clean() {
         let dir =
             Path::new(env!("CARGO_MANIFEST_DIR")).join("../../challenges/ledger-cbor/baseline");
         if dir.is_dir() {
-            assert_eq!(check(&dir, &dir, "src"), Ok(()));
+            assert_eq!(check(&dir, &dir, &ledger_srcs()), Ok(()));
         }
     }
 
@@ -802,13 +859,13 @@ f !x = unsafeDeserialize x -- unsafe in a comment
         {
             fresh(Some(&v.path()));
             assert_eq!(
-                check(&ch.join("baseline"), &tmp, "src"),
+                check(&ch.join("baseline"), &tmp, &ledger_srcs()),
                 Ok(()),
                 "{:?}",
                 v.path()
             );
         }
-        let file = tmp.join("src/Cardano/Ledger/Binary/Decoding/Sized.hs");
+        let file = tmp.join("cardano-ledger-binary/src/Cardano/Ledger/Binary/Decoding/Sized.hs");
         for (head, body) in [
             ("{-# options_ghc -F -pgmF ./pp.sh #-}\n", ""),
             ("{-#ANN module () #-}\n", ""),
@@ -826,16 +883,18 @@ f !x = unsafeDeserialize x -- unsafe in a comment
             let src = src.replacen("\nimport ", &format!("{body}\nimport "), 1);
             std::fs::write(&file, format!("{head}{src}")).unwrap();
             assert!(
-                check(&ch.join("baseline"), &tmp, "src").is_err(),
+                check(&ch.join("baseline"), &tmp, &ledger_srcs()).is_err(),
                 "{head}{body}"
             );
         }
         // Outside src/, and new files.
         fresh(None);
-        std::fs::write(tmp.join("cardano-ledger-binary.cabal"), "x").unwrap();
-        std::fs::write(tmp.join("src/New.hs"), "module New where\n").unwrap();
+        std::fs::write(tmp.join("cardano-ledger-core/x.cabal"), "x").unwrap();
+        std::fs::write(tmp.join("cardano-ledger-binary/src/New.hs"), "module New where\n").unwrap();
         assert_eq!(
-            check(&ch.join("baseline"), &tmp, "src").unwrap_err().len(),
+            check(&ch.join("baseline"), &tmp, &ledger_srcs())
+                .unwrap_err()
+                .len(),
             2
         );
         let _ = std::fs::remove_dir_all(&tmp);
