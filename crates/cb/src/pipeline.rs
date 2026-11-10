@@ -355,11 +355,24 @@ pub fn score(
         }
         None => None,
     };
+    // Builds learn their role (CB_ROLE=candidate|record): a challenge can
+    // skip slow checks the record already passed (ledger-cbor's upstream tests).
     let build_in = |w: &Path, build: &str| -> preflight::Run {
+        let role = if rec_ws.as_deref() == Some(w) {
+            "record"
+        } else {
+            "candidate"
+        };
+        let env: Vec<(String, String)> = env
+            .iter()
+            .cloned()
+            .chain([("CB_ROLE".to_string(), role.to_string())])
+            .collect();
+        let env = &env[..];
         // In CI (--sandbox), a challenge with [build_sandbox] builds in it (#51).
         match spec.build_sandbox.as_ref().filter(|_| sandbox) {
             Some(bs) if preflight::build_sandbox_available() => {
-                preflight::run_mode(preflight::Mode::Build(bs), &env, w, build, 0)
+                preflight::run_mode(preflight::Mode::Build(bs), env, w, build, 0)
             }
             Some(_) => preflight::Run {
                 ok: false,
@@ -367,7 +380,7 @@ pub fn score(
                 secs: 0.0,
                 detail: "build sandbox unavailable (needs Linux, sudo, unshare, setpriv)".into(),
             },
-            None => run_in(false, &env, w, build, 0),
+            None => run_in(false, env, w, build, 0),
         }
     };
     if let Some(build) = &spec.commands.build {

@@ -805,7 +805,11 @@ f !x = unsafeDeserialize x -- unsafe in a comment
     /// [haskell] src from the real challenge.toml.
     fn ledger_srcs() -> Vec<String> {
         let ch = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../challenges/ledger-cbor");
-        crate::challenge::Spec::load(&ch).unwrap().haskell.unwrap().src
+        crate::challenge::Spec::load(&ch)
+            .unwrap()
+            .haskell
+            .unwrap()
+            .src
     }
 
     #[test]
@@ -890,7 +894,11 @@ f !x = unsafeDeserialize x -- unsafe in a comment
         // Outside src/, and new files.
         fresh(None);
         std::fs::write(tmp.join("cardano-ledger-core/x.cabal"), "x").unwrap();
-        std::fs::write(tmp.join("cardano-ledger-binary/src/New.hs"), "module New where\n").unwrap();
+        std::fs::write(
+            tmp.join("cardano-ledger-binary/src/New.hs"),
+            "module New where\n",
+        )
+        .unwrap();
         assert_eq!(
             check(&ch.join("baseline"), &tmp, &ledger_srcs())
                 .unwrap_err()

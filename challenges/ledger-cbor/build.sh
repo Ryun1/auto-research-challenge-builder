@@ -52,3 +52,22 @@ grep -v '^#' packages.txt | while read -r name path; do
 done
 ( cd "$L" && cabal build -v1 --project-file=cabal.project.cand --builddir=dist-cand ledger-cbor-harness )
 cp "$(cd "$L" && cabal list-bin --project-file=cabal.project.cand --builddir=dist-cand ledger-cbor-harness)" .bin/candidate
+
+# #53: upstream's own test suites for every editable package, against the
+# candidate (the harness only decodes Conway mempool txs at PV 11). Slow, so
+# opt-in: promotion and preflight set CB_UPSTREAM_TESTS=1. setup.sh fetched
+# their dependencies (the CI build has no network). Separate builddir: enabling
+# tests changes the plan, and dist-cand should stay warm for the harness.
+# The record's tree (CB_ROLE=record, paired promotion) passed them already.
+if [ "${CB_UPSTREAM_TESTS:-0}" = 1 ] && [ "${CB_ROLE:-candidate}" != record ]; then
+  targets=$(grep -v '^#' packages.txt | awk 'NF { print $1 ":test:tests" }')
+  cd "$L"
+  # shellcheck disable=SC2086
+  cabal build -v1 --project-file=cabal.project.cand --builddir=dist-cand-test --enable-tests $targets
+  for t in $targets; do
+    echo "upstream tests: $t"
+    timeout "${CB_UPSTREAM_TESTS_TIMEOUT:-1800}" cabal test -v1 --project-file=cabal.project.cand \
+      --builddir=dist-cand-test --enable-tests --test-show-details=failures "$t" \
+      || { echo "upstream tests failed: $t"; exit 1; }
+  done
+fi

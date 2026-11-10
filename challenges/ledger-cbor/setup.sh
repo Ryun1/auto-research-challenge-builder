@@ -72,5 +72,12 @@ mkdir -p .bin
     echo "cabal update failed; using the cached index (index-state is pinned)"
   fi
   cabal build -v1 --project-file=cabal.project.ref --builddir=dist-ref ledger-cbor-harness
+  # Upstream test suites (#53, build.sh): download their dependencies now, while
+  # there is network. Download only: setup never compiles candidate code.
+  if [ "${CB_UPSTREAM_TESTS:-0}" = 1 ]; then
+    # shellcheck disable=SC2046
+    cabal build -v1 --project-file=cabal.project.cand --builddir=dist-cand-test --enable-tests --only-download \
+      $(grep -v '^#' "$OLDPWD/packages.txt" | awk 'NF { print $1 ":test:tests" }')
+  fi
 )
 cp "$(cd "$L" && cabal list-bin --project-file=cabal.project.ref --builddir=dist-ref ledger-cbor-harness)" .bin/reference

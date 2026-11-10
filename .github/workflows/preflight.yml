@@ -8,6 +8,10 @@ on:
       slug:
         description: challenges/<slug>
         required: true
+      upstream_tests:
+        description: "ledger-cbor: also build and run upstream's test suites on the baseline (#53)"
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -64,6 +68,16 @@ jobs:
         # (e.g. callgrind scoring is "no" there by design), so it never fails the run.
         continue-on-error: ${{ runner.os == 'macOS' }}
         run: ./target/release/cb preflight "$SLUG" --out preflight-out
+      - name: upstream test suites on the baseline (#53)
+        # Separate from cb preflight: the broken variants would fail these at
+        # build time instead of reaching the verifier. Times the step for #53.
+        if: inputs.upstream_tests && runner.os == 'Linux'
+        run: |
+          cd "challenges/$SLUG"
+          start=$(date +%s)
+          CB_UPSTREAM_TESTS=1 ./setup.sh
+          CB_UPSTREAM_TESTS=1 ./build.sh 2>&1 | tee ../../upstream-tests.txt
+          echo "upstream tests: $(( ($(date +%s) - start) / 60 )) min" | tee -a ../../upstream-tests.txt
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         if: always()
         with:
@@ -71,3 +85,4 @@ jobs:
           path: |
             preflight-out/
             warm-setup.txt
+            upstream-tests.txt
