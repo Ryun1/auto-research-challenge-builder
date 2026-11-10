@@ -215,6 +215,9 @@ pub struct Lexed {
     pub code: String,
     /// Each `{-# ... #-}` pragma body, whitespace-normalised.
     pub pragmas: Vec<String>,
+    /// Ended inside a string, comment or pragma, or a string GHC would
+    /// reject: the split above can't be trusted, so the file is refused.
+    pub malformed: bool,
 }
 
 fn is_symbol(c: char) -> bool {
@@ -245,6 +248,9 @@ pub fn lex(src: &str) -> Lexed {
             while j + 2 < b.len() && !(b[j] == '#' && b[j + 1] == '-' && b[j + 2] == '}') {
                 j += 1;
             }
+            if j + 2 >= b.len() {
+                out.malformed = true;
+            }
             let end = j.min(b.len());
             out.pragmas
                 .push(norm(&b[start..end].iter().collect::<String>()));
@@ -273,6 +279,9 @@ pub fn lex(src: &str) -> Lexed {
                     i += 1;
                 }
             }
+            if depth > 0 {
+                out.malformed = true;
+            }
             continue;
         }
         // -- line comment: 2+ dashes not part of a longer operator
@@ -294,23 +303,59 @@ pub fn lex(src: &str) -> Lexed {
             out.code.push(' ');
             i += 1;
             while i < b.len() && b[i] != '"' {
-                if b[i] == '\\' && i + 1 < b.len() {
-                    out.code.push(' ');
-                    i += 1;
+                if b[i] == '\n' {
+                    out.malformed = true; // GHC: lexical error
                 }
-                out.code.push(blank(b[i]));
-                i += 1;
+                if b[i] != '\\' {
+                    out.code.push(blank(b[i]));
+                    i += 1;
+                    continue;
+                }
+                match b.get(i + 1) {
+                    // String gap: \ whitespace... \
+                    Some(w) if w.is_whitespace() => {
+                        out.code.push(' ');
+                        i += 1;
+                        while i < b.len() && b[i].is_whitespace() {
+                            out.code.push(blank(b[i]));
+                            i += 1;
+                        }
+                        if b.get(i) == Some(&'\\') {
+                            out.code.push(' ');
+                            i += 1;
+                        } else {
+                            out.malformed = true;
+                        }
+                    }
+                    // \^X: X may be \ (control-backslash)
+                    Some('^') => {
+                        let stop = (i + 3).min(b.len());
+                        out.code.extend(b[i..stop].iter().map(|&c| blank(c)));
+                        i = stop;
+                    }
+                    // \" \\ \n \x41 \NUL ...: the rest of a long escape is
+                    // alphanumeric, so consuming two chars is enough.
+                    _ => {
+                        let stop = (i + 2).min(b.len());
+                        out.code.extend(b[i..stop].iter().map(|&c| blank(c)));
+                        i = stop;
+                    }
+                }
             }
             if i < b.len() {
                 out.code.push(' ');
                 i += 1;
+            } else {
+                out.malformed = true;
             }
             continue;
         }
         // 'c' char literal (not a prime, not a promoted 'Constructor)
         if c == '\'' && !(i > 0 && is_ident(b[i - 1])) {
             let end = if at(1) == Some('\\') {
-                (i + 2..b.len().min(i + 12)).find(|&k| b[k] == '\'')
+                // The escaped char (at i+2, maybe ' or \, or ^X) is never the end.
+                let from = if at(2) == Some('^') { i + 4 } else { i + 3 };
+                (from..b.len().min(i + 12)).find(|&k| b[k] == '\'')
             } else if at(2) == Some('\'') {
                 Some(i + 2)
             } else {
@@ -366,31 +411,56 @@ fn cpp_lines(raw: &str) -> Vec<String> {
 
 /// Import declarations: (module, whole declaration normalised).
 fn imports(l: &Lexed) -> Vec<(String, String)> {
-    let lines: Vec<&str> = l.code.lines().collect();
+    // Every `import` keyword, wherever it is: after `;` or `{`, or in an
+    // indented or explicit-brace module body, not just at column 0. It's a
+    // reserved word, so outside comments and strings it always starts an
+    // import (or a `foreign import`, refused separately). A declaration runs
+    // to `;`, `}`, or a line indented no deeper than the keyword (layout).
+    // Tabs count as one column here and as more for GHC, so this never takes
+    // in text GHC leaves out. It can stop early, which only makes the
+    // declaration fail to match.
+    let b: Vec<char> = l.code.chars().collect();
     let mut out = Vec::new();
     let mut i = 0;
-    while i < lines.len() {
-        if lines[i].starts_with("import") && !lines[i][6..].starts_with(is_ident) {
-            let mut decl = lines[i].to_string();
-            // Continuation lines are indented.
-            while i + 1 < lines.len()
-                && (lines[i + 1].starts_with([' ', '\t']) || lines[i + 1].trim().is_empty())
-            {
-                i += 1;
-                decl.push(' ');
-                decl.push_str(lines[i]);
-            }
-            let decl = norm(&decl);
-            let module = decl
-                .split(|c: char| c.is_whitespace() || c == '(')
-                .filter(|w| !w.is_empty())
-                .skip(1)
-                .find(|w| *w != "qualified" && *w != "safe" && *w != "{-#")
-                .unwrap_or("")
-                .to_string();
-            out.push((module, decl));
+    while i + 6 <= b.len() {
+        let is_kw = b[i..i + 6].iter().collect::<String>() == "import"
+            && (i == 0 || !(is_ident(b[i - 1]) || b[i - 1] == '.'))
+            && b.get(i + 6).is_none_or(|&c| !is_ident(c));
+        if !is_kw {
+            i += 1;
+            continue;
         }
-        i += 1;
+        let col = i - b[..i].iter().rposition(|&c| c == '\n').map_or(0, |n| n + 1);
+        let mut j = i;
+        while j < b.len() && b[j] != ';' && b[j] != '}' {
+            if b[j] == '\n' {
+                // Next non-blank line: a continuation only if indented deeper.
+                let mut k = j + 1;
+                let mut ind = 0;
+                loop {
+                    match b.get(k) {
+                        Some(' ') | Some('\t') => ind += 1,
+                        Some('\n') => ind = 0,
+                        _ => break,
+                    }
+                    k += 1;
+                }
+                if k >= b.len() || ind <= col {
+                    break;
+                }
+            }
+            j += 1;
+        }
+        let decl = norm(&b[i..j].iter().collect::<String>());
+        let module = decl
+            .split(|c: char| c.is_whitespace() || c == '(')
+            .filter(|w| !w.is_empty())
+            .skip(1)
+            .find(|w| *w != "qualified" && *w != "safe")
+            .unwrap_or("")
+            .to_string();
+        out.push((module, decl));
+        i = j.max(i + 6);
     }
     out
 }
@@ -446,6 +516,9 @@ pub fn check_file(
 ) -> Vec<String> {
     let (lb, lc) = (lex(base), lex(cand));
     let mut errs = Vec::new();
+    if lc.malformed {
+        errs.push("unterminated or malformed string, comment or pragma".into());
+    }
     // cpp and GHC may see line breaks Rust's lines() doesn't: refuse them.
     if cand.contains(['\x0b', '\x0c']) || cand.replace("\r\n", "").contains('\r') {
         errs.push("lone CR, vertical tab or form feed".into());
@@ -506,7 +579,9 @@ pub fn check_file(
     // Imports.
     let same_file: BTreeSet<String> = imports(&lb).into_iter().map(|(_, d)| d).collect();
     for (m, decl) in imports(&lc) {
-        if BANNED_MODULES.iter().any(|b| has_prefix(&m, b)) {
+        if !m.starts_with(|c: char| c.is_ascii_uppercase()) {
+            errs.push(format!("import not understood: {decl:?}"));
+        } else if BANNED_MODULES.iter().any(|b| has_prefix(&m, b)) {
             if !same_file.contains(&decl) {
                 errs.push(format!(
                     "import of {m} is only allowed as an exact copy of this baseline file's: {decl:?}"
@@ -781,6 +856,33 @@ f !x = unsafeDeserialize x -- unsafe in a comment
     }
 
     #[test]
+    fn imports_anywhere() {
+        // Semicolons, explicit braces, an indented body, a split declaration.
+        for src in [
+            "module M where\nimport Data.List; import GHC.Exts\n",
+            "module M where { import Data.List ; import GHC.Exts }\n",
+            "module M where\n  import Data.List\n  import GHC.Exts\n",
+            "module M where\nimport\n  GHC.Exts\n",
+            "module M where\n    import Data.List\n\timport GHC.Exts\n",
+        ] {
+            let ms: Vec<String> = imports(&lex(src)).into_iter().map(|(m, _)| m).collect();
+            assert!(ms.contains(&"GHC.Exts".to_string()), "{src:?}: {ms:?}");
+            assert!(
+                !errs(&with("", &src.replace("module M where", ""))).is_empty(),
+                "{src:?}"
+            );
+        }
+        // Not keywords: identifiers containing it, qualified names.
+        assert!(imports(&lex("x = importer + M.import' + reimport\n")).is_empty());
+        // A tab-indented continuation is cut short: the bare import can't
+        // match the baseline's restricted one.
+        let base = "module M where\n    import GHC.Base (Type)\n";
+        let none = BTreeSet::new();
+        let cand = "module M where\n    import GHC.Base\n\t(Type)\n";
+        assert!(!check_file(base, cand, &none, &none, &none).is_empty());
+    }
+
+    #[test]
     fn tokens() {
         assert!(!errs(&with("", "g = unsafePerformIO x\n")).is_empty());
         assert!(!errs(&with("", "g = UNSAFEcoerce x\n")).is_empty());
@@ -790,6 +892,34 @@ f !x = unsafeDeserialize x -- unsafe in a comment
         assert!(!errs(&with("", "foreign import ccall \"getpid\" p :: Int\n")).is_empty());
         // In comments and strings it's fine.
         assert!(errs(&with("", "-- unsafePerformIO\ng = \"unsafePerformIO\"\n{- runRW# {- nested -} foreign import -}\n")).is_empty());
+    }
+
+    #[test]
+    fn string_gaps_and_escapes_dont_desync() {
+        // GHC ends each string at the last quote; code after it is code.
+        for src in [
+            "s = \"a\\   \\\"\nimport GHC.Exts\n",
+            "s = \"a\\\n   \\\"\nimport GHC.Exts\n",
+            "s = \"\\^\\\"\nimport GHC.Exts\n",
+            "s = \"\\\\\"\nimport GHC.Exts\n",
+            "c = '\\''\nimport GHC.Exts\n",
+            "c = '\\^\\'\nimport GHC.Exts\n",
+        ] {
+            let l = lex(src);
+            assert!(!l.malformed, "{src:?}");
+            let ms: Vec<String> = imports(&l).into_iter().map(|(m, _)| m).collect();
+            assert_eq!(ms, ["GHC.Exts"], "{src:?}");
+        }
+        for bad in [
+            "s = \"abc\n",
+            "{- open\n",
+            "{-# OPTIONS_GHC\n",
+            "s = \"a\\  x\"\n",
+            "s = \"a\nb\"\n",
+        ] {
+            assert!(lex(bad).malformed, "{bad:?}");
+            assert!(!errs(&with("", bad)).is_empty(), "{bad:?}");
+        }
     }
 
     #[test]
