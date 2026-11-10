@@ -235,7 +235,7 @@ pub(crate) fn build_script(
     let mut s = String::from(
         "set -eu\n\
          ro() { [ -e \"$1\" ] || return 0; mount --bind \"$1\" \"$1\"; mount -o remount,bind,ro \"$1\"; }\n\
-         rw() { mount --bind \"$1\" \"$1\"; }\n\
+         rw() { mount --bind \"$1\" \"$1\"; mount -o remount,bind,rw \"$1\"; }\n\
          ovl_n=0\n\
          ovl() { ovl_n=$((ovl_n+1)); mkdir -p \"$scratch/$ovl_n/u\" \"$scratch/$ovl_n/w\"; \
          chown --reference=\"$1\" \"$scratch/$ovl_n/u\"; chmod --reference=\"$1\" \"$scratch/$ovl_n/u\"; \
@@ -253,6 +253,11 @@ pub(crate) fn build_script(
     for o in &b.outputs {
         s += &format!("rw {}\n", sq(&dir.join(o).display().to_string()));
     }
+    // A bind mount copies the read-only flag of the mount it came from, so rw()
+    // remounts its target writable. This shell's cwd still points at the
+    // workspace's original writable mount, and the build would inherit it:
+    // cd again so the cwd goes through the new mounts.
+    s += "cd -- \"$PWD\"\n";
     // Not exec: this shell (pid 1 of the namespace) waits for the build, then
     // its trap deletes the overlay layers.
     s += &format!(
