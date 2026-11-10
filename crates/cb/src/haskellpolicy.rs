@@ -350,7 +350,7 @@ fn extensions(l: &Lexed) -> Vec<String> {
 /// Any line whose first non-blank char is `#` (except a `#-}` pragma closer),
 /// whitespace-normalised.
 fn cpp_lines(raw: &str) -> Vec<String> {
-    raw.lines()
+    raw.split(['\n', '\r'])
         .map(str::trim_start)
         .filter(|ln| ln.starts_with('#') && !ln.starts_with("#-}"))
         .map(norm)
@@ -439,6 +439,10 @@ pub fn check_file(
 ) -> Vec<String> {
     let (lb, lc) = (lex(base), lex(cand));
     let mut errs = Vec::new();
+    // cpp and GHC may see line breaks Rust's lines() doesn't: refuse them.
+    if cand.contains(['\x0b', '\x0c']) || cand.replace("\r\n", "").contains('\r') {
+        errs.push("lone CR, vertical tab or form feed".into());
+    }
 
     // Pragmas.
     let base_exts: BTreeSet<String> = extensions(&lb).into_iter().collect();
@@ -707,6 +711,9 @@ f !x = unsafeDeserialize x -- unsafe in a comment
         assert!(!errs(&with("", "{-\n#include \"/etc/passwd\"\n-}\n")).is_empty());
         assert!(!errs(&with("", "s = \"a\\\n#include \"x\"\n\\b\"\n")).is_empty());
         assert!(!errs(&with("", "  #include \"x\"\n")).is_empty());
+        assert!(!errs(&with("", "x = 1\r#include \"x\"\n")).is_empty());
+        assert!(!errs(&with("", "x = 1\x0c\n")).is_empty());
+        assert!(errs(&BASE.replace('\n', "\r\n")).is_empty());
         // A pragma closer on its own line is not a directive.
         assert!(errs(&with("", "{-# INLINE g\n  #-}\n")).is_empty());
     }
