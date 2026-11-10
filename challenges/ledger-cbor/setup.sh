@@ -73,6 +73,10 @@ mkdir -p .bin
     echo "cabal update failed; using the cached index (index-state is pinned)"
   fi
   cabal build -v1 --project-file=cabal.project.ref --builddir=dist-ref ledger-cbor-harness
+  # The candidate build runs offline in CI (build sandbox): clone its
+  # source-repository-packages into dist-cand and download its deps now. cabal
+  # records the sync, so the offline build doesn't fetch again. No compiling.
+  cabal build -v1 --project-file=cabal.project.cand --builddir=dist-cand --only-download ledger-cbor-harness
   # Upstream test suites (#53, build.sh): download their dependencies now, while
   # there is network. Download only: setup never compiles candidate code.
   if [ "${CB_UPSTREAM_TESTS:-0}" = 1 ]; then

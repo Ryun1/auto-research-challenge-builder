@@ -238,6 +238,7 @@ pub(crate) fn build_script(
          rw() { mount --bind \"$1\" \"$1\"; }\n\
          ovl_n=0\n\
          ovl() { ovl_n=$((ovl_n+1)); mkdir -p \"$scratch/$ovl_n/u\" \"$scratch/$ovl_n/w\"; \
+         chown --reference=\"$1\" \"$scratch/$ovl_n/u\"; chmod --reference=\"$1\" \"$scratch/$ovl_n/u\"; \
          mount -t overlay overlay -o \"lowerdir=$1,upperdir=$scratch/$ovl_n/u,workdir=$scratch/$ovl_n/w\" \"$1\"; }\n\
          scratch=$(mktemp -d /var/tmp/cb-build.XXXXXX)\n\
          trap 'rm -rf \"$scratch\"' EXIT\n",
@@ -710,9 +711,14 @@ pub fn run_all(dir: &Path) -> Result<Report, String> {
             .map(|p| p.display().to_string())
             .unwrap_or_default();
         let probe = format!(
-            "! touch \"$HOME/.cb-probe\" 2>/dev/null && ! touch cb-probe 2>/dev/null \
-             && ! sudo -n true 2>/dev/null && ! (exec 3<>/dev/tcp/1.1.1.1/443) 2>/dev/null \
-             && {{ [ -z {o} ] || : > {o}; }} && {{ [ -z {w} ] || {{ : > {w} && [ -e {w} ]; }}; }}",
+            "fail() {{ echo \"probe: $1\" >&2; exit 1; }}; \
+             touch \"$HOME/.cb-probe\" 2>/dev/null && fail 'home writable'; \
+             touch cb-probe 2>/dev/null && fail 'workspace writable'; \
+             sudo -n true 2>/dev/null && fail 'sudo works'; \
+             (exec 3<>/dev/tcp/1.1.1.1/443) 2>/dev/null && fail 'network reachable'; \
+             [ -z {o} ] || : > {o} || fail 'output not writable'; \
+             [ -z {w} ] || {{ : > {w} && [ -e {w} ]; }} || fail 'cache dir not writable inside'; \
+             exit 0",
             o = sq(out),
             w = sq(&p_str)
         );
