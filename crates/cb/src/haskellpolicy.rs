@@ -345,11 +345,14 @@ fn extensions(l: &Lexed) -> Vec<String> {
         .collect()
 }
 
-/// CPP directive lines (`#` in column 0 of the code), whitespace-normalised.
-fn cpp_lines(l: &Lexed) -> Vec<String> {
-    l.code
-        .lines()
-        .filter(|ln| ln.starts_with('#'))
+/// Possible CPP directive lines, from the RAW source: CPP runs before GHC
+/// lexes, so a directive inside a `{- -}` comment or a string gap still runs.
+/// Any line whose first non-blank char is `#` (except a `#-}` pragma closer),
+/// whitespace-normalised.
+fn cpp_lines(raw: &str) -> Vec<String> {
+    raw.lines()
+        .map(str::trim_start)
+        .filter(|ln| ln.starts_with('#') && !ln.starts_with("#-}"))
         .map(norm)
         .collect()
 }
@@ -475,8 +478,8 @@ pub fn check_file(
     }
 
     // CPP directives.
-    let mut base_cpp = cpp_lines(&lb);
-    for d in cpp_lines(&lc) {
+    let mut base_cpp = cpp_lines(base);
+    for d in cpp_lines(cand) {
         match base_cpp.iter().position(|q| *q == d) {
             Some(k) => {
                 base_cpp.remove(k);
@@ -700,6 +703,12 @@ f !x = unsafeDeserialize x -- unsafe in a comment
         assert!(!errs(&with("", "#include \"/etc/passwd\"\n")).is_empty());
         assert!(!errs(&with("", "# include \"x\"\n")).is_empty());
         assert!(!errs(&with("", "#define X 1\n")).is_empty());
+        // Hidden from the Haskell lexer, not from CPP.
+        assert!(!errs(&with("", "{-\n#include \"/etc/passwd\"\n-}\n")).is_empty());
+        assert!(!errs(&with("", "s = \"a\\\n#include \"x\"\n\\b\"\n")).is_empty());
+        assert!(!errs(&with("", "  #include \"x\"\n")).is_empty());
+        // A pragma closer on its own line is not a directive.
+        assert!(errs(&with("", "{-# INLINE g\n  #-}\n")).is_empty());
     }
 
     #[test]
