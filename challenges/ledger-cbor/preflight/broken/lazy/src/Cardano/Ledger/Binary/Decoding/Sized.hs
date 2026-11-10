@@ -46,7 +46,9 @@ unsafeMapSized f s@Sized {sizedValue} = s {sizedValue = f sizedValue}
 
 instance NoThunks a => NoThunks (Sized a)
 
-instance NFData a => NFData (Sized a) where
+-- No NFData a constraint: rnf never touches the value, and upstream builds with
+-- -Werror -Wredundant-constraints.
+instance NFData (Sized a) where
   rnf (Sized _ sz) = sz `seq` ()
 
 -- | Construct a `Sized` value by serializing it first and recording the amount

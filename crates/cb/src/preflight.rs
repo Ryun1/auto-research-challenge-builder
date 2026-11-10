@@ -605,23 +605,30 @@ pub fn run_all(dir: &Path) -> Result<Report, String> {
         }
         let ws = workspace(dir, editable, std::slice::from_ref(&src), name)?;
         // Same setup as the baseline, so a variant fails for its own reason.
-        let setup_ok = run(&env, &ws, &spec.commands.setup, seed).ok;
+        let setup = run(&env, &ws, &spec.commands.setup, seed);
         let b = spec
             .commands
             .build
             .as_ref()
             .map(|b| run(&env, &ws, b, seed));
         let v = run(&env, &ws, &spec.commands.verify, seed);
-        let (status, detail) = match (setup_ok && b.as_ref().is_none_or(|b| b.ok), verify_ok(&v)) {
-            (false, _) => (
+        let failed = if !setup.ok {
+            Some(format!("setup: {}", setup.detail))
+        } else {
+            b.as_ref()
+                .filter(|b| !b.ok)
+                .map(|b| format!("build: {}", b.detail))
+        };
+        let (status, detail) = match (failed, verify_ok(&v)) {
+            (Some(why), _) => (
                 Status::Fail,
-                "setup or build failed, so it doesn't test the verifier".to_string(),
+                format!("{why}; so it doesn't test the verifier"),
             ),
-            (true, true) => (
+            (None, true) => (
                 Status::Fail,
                 "verifier ACCEPTED a broken candidate".to_string(),
             ),
-            (true, false) => (Status::Pass, "rejected".to_string()),
+            (None, false) => (Status::Pass, "rejected".to_string()),
         };
         r.push(&format!("broken: {name}"), status, detail);
         let _ = std::fs::remove_dir_all(&ws);
