@@ -9,7 +9,9 @@ LEDGER_SHA=7827506b7518284d7f9dbbe3502a20431e513fe9
 L="${CB_LEDGER_CACHE:-${XDG_CACHE_HOME:-$HOME/.cache}/cb-ledger-cbor}/$LEDGER_SHA"
 
 python3 - <<'EOF'
-# Policy, relative to the baseline:
+# Quick local check. The authoritative policy is the allowlist `cb gate` runs
+# (crates/cb/src/haskellpolicy.rs, [haskell] in challenge.toml); this denylist
+# alone is bypassable (#51). Policy, relative to the baseline:
 #  - only files under src/ may change or be added (cabal file, Setup.hs, tests frozen)
 #  - each banned token, and each distinct identifier containing "unsafe" (any
 #    case), appears in src/ no more often than in the baseline. Counted per

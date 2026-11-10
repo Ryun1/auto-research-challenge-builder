@@ -24,5 +24,8 @@ min_improvement_bips = 100  # 1% fewer instructions; spike run 42294073486 check
 blocks = 4             # mirrored BCCB/CBBC blocks
 max_dispersion = 0.08  # rel-MAD cap per side (provably.fast v3)
 
+[haskell]
+src = "src"  # cb gate: allowlist of pragmas, extensions and imports vs baseline/ (crates/cb/src/haskellpolicy.rs)
+
 [inputs]
 salted = true  # seed drawn by the harness after the build, recorded after

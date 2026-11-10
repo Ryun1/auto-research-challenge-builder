@@ -5,6 +5,7 @@ use std::process::ExitCode;
 mod candidate;
 mod challenge;
 mod feed;
+mod haskellpolicy;
 mod paths;
 mod pipeline;
 mod policy;

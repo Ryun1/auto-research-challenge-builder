@@ -481,6 +481,35 @@ pub fn run_all(dir: &Path) -> Result<Report, String> {
             Err(e) => r.push("rust policy", Status::Fail, e.join("; ")),
         }
     }
+    // Haskell: the baseline passes its own policy, and so does every broken
+    // variant (else the gate would refuse it before the verifier sees it).
+    if let Some(hs) = &spec.haskell {
+        let base = dir.join("baseline");
+        let mut errs: Vec<String> = crate::haskellpolicy::check(&base, &base, &hs.src)
+            .err()
+            .unwrap_or_default();
+        for name in broken_variants(dir) {
+            let ws = workspace(
+                dir,
+                editable,
+                &[dir.join("preflight/broken").join(&name)],
+                &format!("hs-{name}"),
+            )?;
+            if let Err(e) = crate::haskellpolicy::check(&base, &ws.join(editable), &hs.src) {
+                errs.extend(e.into_iter().map(|e| format!("broken/{name}: {e}")));
+            }
+            let _ = std::fs::remove_dir_all(&ws);
+        }
+        if errs.is_empty() {
+            r.push(
+                "haskell policy",
+                Status::Pass,
+                "baseline and broken variants clean",
+            );
+        } else {
+            r.push("haskell policy", Status::Fail, errs.join("; "));
+        }
+    }
     let size = tree_bytes(&dir.join("baseline"));
     if size > spec.paths.max_bytes {
         r.push(

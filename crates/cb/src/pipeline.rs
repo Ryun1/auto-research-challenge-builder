@@ -11,7 +11,7 @@
 
 use crate::challenge::Spec;
 use crate::preflight::{self, host, metrics, run_in, verify_ok};
-use crate::{paths, policy, rustpolicy};
+use crate::{haskellpolicy, paths, policy, rustpolicy};
 use serde_json::{json, Value};
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -193,6 +193,15 @@ pub fn gate(repo: &Path, root: &str, base: &str, head: &str, out: &Path) -> Gate
         for e in &spec.paths.editable {
             let dir = out.join(root).join(&slug).join(e.trim_end_matches('/'));
             if let Err(errs) = rustpolicy::check_dir(&dir, &rust.allow) {
+                g.errors.extend(errs);
+            }
+        }
+    }
+    if let Some(hs) = &spec.haskell {
+        let base = repo.join(root).join(&slug).join("baseline");
+        for e in &spec.paths.editable {
+            let dir = out.join(root).join(&slug).join(e.trim_end_matches('/'));
+            if let Err(errs) = haskellpolicy::check(&base, &dir, &hs.src) {
                 g.errors.extend(errs);
             }
         }

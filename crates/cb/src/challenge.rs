@@ -20,6 +20,8 @@ pub struct Spec {
     pub perf: Option<Perf>,
     /// Rust kit only.
     pub rust: Option<RustOpts>,
+    /// Haskell source policy (no kit): checked by `cb gate` and preflight.
+    pub haskell: Option<HaskellOpts>,
     #[serde(default)]
     pub inputs: Inputs,
 }
@@ -81,6 +83,19 @@ pub struct RustOpts {
     /// Opt-in token groups: "unsafe", "asm", "target_feature".
     #[serde(default)]
     pub allow: Vec<String>,
+}
+
+/// The editable path is a Haskell package; only `src` may differ from the
+/// baseline, under the allowlist in `haskellpolicy`.
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct HaskellOpts {
+    #[serde(default = "default_hs_src")]
+    pub src: String,
+}
+
+fn default_hs_src() -> String {
+    "src".into()
 }
 
 #[derive(Debug, Deserialize)]
