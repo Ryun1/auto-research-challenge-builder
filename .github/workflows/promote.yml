@@ -72,11 +72,13 @@ jobs:
       matrix:
         n: [1, 2]
     runs-on: ${{ needs.detect.outputs.runner }}
-    # Haskell challenges rebuild the ledger packages against the candidate.
-    timeout-minutes: 150
+    # Haskell challenges rebuild the ledger packages against the candidate,
+    # and promotion builds the record's tree too.
+    timeout-minutes: 240
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          fetch-depth: 0 # --against-record extracts the record commit's editable tree
           persist-credentials: false
       - run: rustup toolchain install
       - if: needs.detect.outputs.kit == 'rust'
@@ -85,11 +87,19 @@ jobs:
         with:
           slug: ${{ needs.detect.outputs.slug }}
       - run: cargo build --locked --release
-      - run: ./target/release/cb score "$SLUG" $([ "$STAGE" = baseline ] && echo --baseline) --sandbox --out score.json
+      # Promotion scores the record's tree too, on the same fresh pool and
+      # seed, and record decides on candidate/record (#57): pool-to-pool
+      # variance cancels. Each of the two runs still fetches its own pool.
+      - run: |
+          case "$STAGE" in
+            baseline) mode=--baseline ;;
+            *) mode=--against-record ;;
+          esac
+          ./target/release/cb score "$SLUG" $mode --sandbox --out score.json
         env:
           SLUG: ${{ needs.detect.outputs.slug }}
           STAGE: ${{ needs.detect.outputs.stage }}
-          CB_POOL: fresh # each of the two runs fetches its own fresh pool
+          CB_POOL: fresh
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: score-${{ matrix.n }}

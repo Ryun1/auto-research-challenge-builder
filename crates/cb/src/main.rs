@@ -100,6 +100,10 @@ enum Command {
         /// Run verify/score as nobody with no network (Linux, sudo)
         #[arg(long)]
         sandbox: bool,
+        /// Also score the current record's editable tree on the same sample
+        /// and report candidate/record (promotion; needs git history)
+        #[arg(long)]
+        against_record: bool,
         #[arg(long, default_value = "score.json")]
         out: PathBuf,
     },
@@ -220,6 +224,7 @@ fn main() -> ExitCode {
             baseline,
             submission,
             sandbox,
+            against_record,
             out,
         } => {
             let source = match (&submission, baseline) {
@@ -227,7 +232,16 @@ fn main() -> ExitCode {
                 (None, true) => pipeline::Source::Baseline,
                 (None, false) => pipeline::Source::AsIs,
             };
-            pipeline::score(&root, &slug, source, sandbox).and_then(|v| {
+            let rec = if against_record {
+                pipeline::record_tree(&root, &slug)
+            } else {
+                Ok(None)
+            };
+            rec.and_then(|rec| {
+                let against = rec.as_ref().map(|(c, t)| (c.as_str(), t.as_path()));
+                pipeline::score(&root, &slug, source, sandbox, against)
+            })
+            .and_then(|v| {
                 let text = serde_json::to_string_pretty(&v).unwrap();
                 println!("{text}");
                 std::fs::write(&out, text + "\n").map_err(|e| e.to_string())
