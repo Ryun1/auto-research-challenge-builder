@@ -92,7 +92,8 @@ pub struct RustOpts {
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct BuildSandbox {
-    /// Absolute or `~/`-relative dirs (caches, build dirs).
+    /// Absolute or `~/`-relative dirs (caches, build dirs), writable through a
+    /// throwaway overlay: the build's writes there vanish when it ends.
     #[serde(default)]
     pub writable: Vec<String>,
     /// Files in the workspace the build writes (e.g. `.bin/candidate`).

@@ -228,23 +228,34 @@ pub(crate) fn build_script(
         Some(r) => format!("{home}/{r}"),
         None => p.to_string(),
     };
+    // Writable dirs are overlays whose upper layer lives in a root-only scratch
+    // dir, deleted when the build ends: the build sees its own writes, but
+    // nothing it writes to a cache or toolchain dir outlives it. Outputs are
+    // the only writes that persist.
     let mut s = String::from(
         "set -eu\n\
          ro() { [ -e \"$1\" ] || return 0; mount --bind \"$1\" \"$1\"; mount -o remount,bind,ro \"$1\"; }\n\
-         rw() { mount --bind \"$1\" \"$1\"; }\n",
+         rw() { mount --bind \"$1\" \"$1\"; }\n\
+         ovl_n=0\n\
+         ovl() { ovl_n=$((ovl_n+1)); mkdir -p \"$scratch/$ovl_n/u\" \"$scratch/$ovl_n/w\"; \
+         mount -t overlay overlay -o \"lowerdir=$1,upperdir=$scratch/$ovl_n/u,workdir=$scratch/$ovl_n/w\" \"$1\"; }\n\
+         scratch=$(mktemp -d /var/tmp/cb-build.XXXXXX)\n\
+         trap 'rm -rf \"$scratch\"' EXIT\n",
     );
     for p in [home, "/opt", "/usr/local", &dir.display().to_string()] {
         s += &format!("ro {}\n", sq(p));
     }
     s += "[ ! -d /run/user ] || mount -t tmpfs -o size=1m,mode=755 tmpfs /run/user\n";
     for w in &b.writable {
-        s += &format!("rw {}\n", sq(&expand(w)));
+        s += &format!("ovl {}\n", sq(&expand(w)));
     }
     for o in &b.outputs {
         s += &format!("rw {}\n", sq(&dir.join(o).display().to_string()));
     }
+    // Not exec: this shell (pid 1 of the namespace) waits for the build, then
+    // its trap deletes the overlay layers.
     s += &format!(
-        "exec setpriv --reuid={uid} --regid={gid} --clear-groups --no-new-privs -- env -i {} bash -c {}\n",
+        "setpriv --reuid={uid} --regid={gid} --clear-groups --no-new-privs -- env -i {} bash -c {}\n",
         vars.iter()
             .map(|(k, v)| sq(&format!("{k}={v}")))
             .collect::<Vec<_>>()
@@ -684,18 +695,40 @@ pub fn run_all(dir: &Path) -> Result<Report, String> {
         .filter(|_| build_sandbox_available());
     if let Some(bs) = sandbox {
         let out = bs.outputs.first().map(String::as_str).unwrap_or("");
+        // A file the probe writes into the first writable (overlay) dir: it
+        // must be visible inside and gone afterwards.
+        let home = std::env::var("HOME").unwrap_or_default();
+        let persist = bs.writable.first().map(|w| {
+            let d = w
+                .strip_prefix("~/")
+                .map(|r| Path::new(&home).join(r))
+                .unwrap_or_else(|| w.into());
+            d.join(".cb-overlay-probe")
+        });
+        let p_str = persist
+            .as_ref()
+            .map(|p| p.display().to_string())
+            .unwrap_or_default();
         let probe = format!(
             "! touch \"$HOME/.cb-probe\" 2>/dev/null && ! touch cb-probe 2>/dev/null \
              && ! sudo -n true 2>/dev/null && ! (exec 3<>/dev/tcp/1.1.1.1/443) 2>/dev/null \
-             && {{ [ -z {o} ] || : > {o}; }}",
-            o = sq(out)
+             && {{ [ -z {o} ] || : > {o}; }} && {{ [ -z {w} ] || {{ : > {w} && [ -e {w} ]; }}; }}",
+            o = sq(out),
+            w = sq(&p_str)
         );
         let p = run_mode(Mode::Build(bs), &env, &base, &probe, seed);
-        if p.ok {
+        let leaked = persist.as_ref().is_some_and(|p| p.exists());
+        if p.ok && !leaked {
             r.push(
                 "build sandbox",
                 Status::Pass,
-                "home and workspace read-only, no sudo, no network; outputs writable",
+                "home and workspace read-only, no sudo, no network; outputs writable; cache writes discarded",
+            );
+        } else if leaked {
+            r.push(
+                "build sandbox",
+                Status::Fail,
+                format!("a write to {p_str} outlived the build"),
             );
         } else {
             r.push(
@@ -1112,11 +1145,15 @@ mod tests {
             "./build.sh 'x'",
         );
         let ro = s.find("ro '/home/r'").unwrap();
-        let rw = s.find("rw '/home/r/.cabal'").unwrap();
+        let rw = s.find("ovl '/home/r/.cabal'").unwrap();
+        assert!(
+            !s.contains("exec setpriv"),
+            "the shell must outlive the build to clean up"
+        );
         assert!(ro < rw, "writable holes go after the read-only mounts");
         assert!(s.contains("ro '/tmp/ws'"));
         assert!(s.contains("rw '/tmp/ws/.bin/candidate'"));
-        assert!(s.contains(r#"rw '/abs/it'\''s'"#));
+        assert!(s.contains(r#"ovl '/abs/it'\''s'"#));
         assert!(s.contains("--reuid=1001 --regid=118 --clear-groups --no-new-privs"));
         assert!(s.contains("'PATH=/a b:/c'"));
         assert!(s.ends_with("bash -c './build.sh '\\''x'\\'''\n"), "{s}");
