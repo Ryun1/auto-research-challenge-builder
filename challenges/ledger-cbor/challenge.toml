@@ -27,5 +27,9 @@ max_dispersion = 0.08  # rel-MAD cap per side (provably.fast v3)
 [haskell]
 src = "src"  # cb gate: allowlist of pragmas, extensions and imports vs baseline/ (crates/cb/src/haskellpolicy.rs)
 
+[build_sandbox]  # CI builds see a read-only $HOME, /opt, /usr/local and workspace except these (#51)
+writable = ["~/.cache/cb-ledger-cbor", "~/.cabal", "~/.cache/cabal", "~/.local/state/cabal"]
+outputs  = [".bin/candidate"]
+
 [inputs]
 salted = true  # seed drawn by the harness after the build, recorded after

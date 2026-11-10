@@ -4,6 +4,7 @@
 //! is the laptop profile (`--local`, or the preflight workflow on
 //! macos/ubuntu runners) and the hostable measurement.
 
+use crate::challenge::BuildSandbox;
 use crate::challenge::Spec;
 use crate::policy;
 use crate::rubric::{Fact, HOSTED};
@@ -175,9 +176,156 @@ pub(crate) fn run_in(
     cmd: &str,
     seed: u64,
 ) -> Run {
+    let mode = if sandbox { Mode::Judge } else { Mode::Plain };
+    run_mode(mode, env, dir, cmd, seed)
+}
+
+/// How a challenge command runs.
+pub(crate) enum Mode<'a> {
+    /// As the current user (setup; builds outside CI).
+    Plain,
+    /// Verify/score: as `nobody`, no network (see [`run_in`]).
+    Judge,
+    /// The build in CI (#51): as the current user, so caches and toolchains
+    /// work, but in a private mount namespace where `$HOME`, `/opt`,
+    /// `/usr/local` and the workspace are read-only except the declared
+    /// writable dirs and outputs. No network, its own pid namespace and /proc
+    /// (nothing outlives it), no supplementary groups (docker), no_new_privs
+    /// (no sudo), and `/run/user` hidden (no systemd/dbus user session). So
+    /// it can't touch the checkout, the runner's action code, `$GITHUB_ENV`
+    /// files or the reference binary that later trusted steps rely on.
+    Build(&'a BuildSandbox),
+}
+
+/// Linux with passwordless sudo, unshare and setpriv (CI runners).
+pub(crate) fn build_sandbox_available() -> bool {
+    cfg!(target_os = "linux")
+        && Command::new("sudo")
+            .args(["-n", "sh", "-c", "command -v unshare && command -v setpriv"])
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status()
+            .is_ok_and(|s| s.success())
+}
+
+/// Single-quotes a string for bash.
+fn sq(s: &str) -> String {
+    format!("'{}'", s.replace('\'', "'\\''"))
+}
+
+/// The mount script for [`Mode::Build`]: runs as root inside the new
+/// namespaces, then drops to the caller's uid.
+pub(crate) fn build_script(
+    b: &BuildSandbox,
+    dir: &Path,
+    home: &str,
+    uid: u32,
+    gid: u32,
+    vars: &[(String, String)],
+    cmd: &str,
+) -> String {
+    let expand = |p: &str| match p.strip_prefix("~/") {
+        Some(r) => format!("{home}/{r}"),
+        None => p.to_string(),
+    };
+    let mut s = String::from(
+        "set -eu\n\
+         ro() { [ -e \"$1\" ] || return 0; mount --bind \"$1\" \"$1\"; mount -o remount,bind,ro \"$1\"; }\n\
+         rw() { mount --bind \"$1\" \"$1\"; }\n",
+    );
+    for p in [home, "/opt", "/usr/local", &dir.display().to_string()] {
+        s += &format!("ro {}\n", sq(p));
+    }
+    s += "[ ! -d /run/user ] || mount -t tmpfs -o size=1m,mode=755 tmpfs /run/user\n";
+    for w in &b.writable {
+        s += &format!("rw {}\n", sq(&expand(w)));
+    }
+    for o in &b.outputs {
+        s += &format!("rw {}\n", sq(&dir.join(o).display().to_string()));
+    }
+    s += &format!(
+        "exec setpriv --reuid={uid} --regid={gid} --clear-groups --no-new-privs -- env -i {} bash -c {}\n",
+        vars.iter()
+            .map(|(k, v)| sq(&format!("{k}={v}")))
+            .collect::<Vec<_>>()
+            .join(" "),
+        sq(cmd)
+    );
+    s
+}
+
+/// True if CI credentials or secrets: never handed to challenge commands.
+fn secret_var(k: &str) -> bool {
+    k.starts_with("ACTIONS_")
+        || k.contains("TOKEN")
+        || k.starts_with("GITHUB_")
+        || k.contains("SECRET")
+}
+
+pub(crate) fn run_mode(
+    mode: Mode,
+    env: &[(String, String)],
+    dir: &Path,
+    cmd: &str,
+    seed: u64,
+) -> Run {
     let start = Instant::now();
     let seed_env = ("CB_SEED".to_string(), seed.to_string());
-    let mut command = if sandbox {
+    if let Mode::Build(b) = &mode {
+        // Writable dirs and outputs must exist before they can be bind-mounted.
+        let home = std::env::var("HOME").unwrap_or_default();
+        let mut prep = Ok(());
+        for w in &b.writable {
+            let p = w
+                .strip_prefix("~/")
+                .map(|r| Path::new(&home).join(r))
+                .unwrap_or_else(|| w.into());
+            prep = prep.and(std::fs::create_dir_all(&p));
+        }
+        for o in &b.outputs {
+            let p = dir.join(o);
+            if let Some(parent) = p.parent() {
+                prep = prep.and(std::fs::create_dir_all(parent));
+            }
+            if !p.exists() {
+                prep = prep.and(std::fs::File::create(&p).map(|_| ()));
+            }
+        }
+        if let Err(e) = prep {
+            return Run {
+                ok: false,
+                stdout: String::new(),
+                secs: 0.0,
+                detail: format!("build sandbox: {e}"),
+            };
+        }
+    }
+    let mut command = if let Mode::Build(b) = &mode {
+        let vars: Vec<(String, String)> = std::env::vars()
+            .filter(|(k, _)| !secret_var(k))
+            .chain(env.iter().cloned())
+            .chain(std::iter::once(seed_env.clone()))
+            .collect();
+        // SAFETY: getuid/getgid have no preconditions.
+        let (uid, gid) = unsafe { (libc::getuid(), libc::getgid()) };
+        let home = std::env::var("HOME").unwrap_or_default();
+        let mut c = Command::new("sudo");
+        c.args([
+            "-n",
+            "unshare",
+            "--mount",
+            "--net",
+            "--pid",
+            "--fork",
+            "--kill-child",
+            "--mount-proc",
+            "--",
+            "bash",
+            "-c",
+        ])
+        .arg(build_script(b, dir, &home, uid, gid, &vars, cmd));
+        c
+    } else if matches!(mode, Mode::Judge) {
         let mut c = Command::new("sudo");
         c.args([
             "unshare",
@@ -211,7 +359,7 @@ pub(crate) fn run_in(
     // Never hand CI credentials to challenge commands (the build compiles
     // submission bytes): ACTIONS_RUNTIME_TOKEN can upload artifacts.
     for (k, _) in std::env::vars() {
-        if k.starts_with("ACTIONS_") || k.contains("TOKEN") || k.starts_with("GITHUB_") {
+        if secret_var(&k) {
             command.env_remove(k);
         }
     }
@@ -529,11 +677,44 @@ pub fn run_all(dir: &Path) -> Result<Report, String> {
         r.push("setup", Status::Fail, setup.detail);
         return Ok(r);
     }
-    let build = spec
-        .commands
-        .build
+    // The build sandbox CI uses (#51): prove it holds, then build in it.
+    let sandbox = spec
+        .build_sandbox
         .as_ref()
-        .map(|b| run(&env, &base, b, seed));
+        .filter(|_| build_sandbox_available());
+    if let Some(bs) = sandbox {
+        let out = bs.outputs.first().map(String::as_str).unwrap_or("");
+        let probe = format!(
+            "! touch \"$HOME/.cb-probe\" 2>/dev/null && ! touch cb-probe 2>/dev/null \
+             && ! sudo -n true 2>/dev/null && ! (exec 3<>/dev/tcp/1.1.1.1/443) 2>/dev/null \
+             && {{ [ -z {o} ] || : > {o}; }}",
+            o = sq(out)
+        );
+        let p = run_mode(Mode::Build(bs), &env, &base, &probe, seed);
+        if p.ok {
+            r.push(
+                "build sandbox",
+                Status::Pass,
+                "home and workspace read-only, no sudo, no network; outputs writable",
+            );
+        } else {
+            r.push(
+                "build sandbox",
+                Status::Fail,
+                format!("probe escaped or failed: {}", p.detail),
+            );
+        }
+    } else if spec.build_sandbox.is_some() {
+        r.push(
+            "build sandbox",
+            Status::Warn,
+            "not on Linux with passwordless sudo: built unsandboxed here",
+        );
+    }
+    let build = spec.commands.build.as_ref().map(|b| match sandbox {
+        Some(bs) => run_mode(Mode::Build(bs), &env, &base, b, seed),
+        None => run(&env, &base, b, seed),
+    });
     if let Some(b) = build.as_ref().filter(|b| !b.ok) {
         r.push("baseline builds", Status::Fail, b.detail.clone());
         return Ok(r);
@@ -912,6 +1093,39 @@ mod tests {
             );
             eprintln!("valgrind not found: skipped score checks\n{text}");
         }
+    }
+
+    #[test]
+    fn build_script_quotes_and_orders_mounts() {
+        let b = crate::challenge::BuildSandbox {
+            writable: vec!["~/.cabal".into(), "/abs/it's".into()],
+            outputs: vec![".bin/candidate".into()],
+        };
+        let vars = vec![("PATH".to_string(), "/a b:/c".to_string())];
+        let s = build_script(
+            &b,
+            Path::new("/tmp/ws"),
+            "/home/r",
+            1001,
+            118,
+            &vars,
+            "./build.sh 'x'",
+        );
+        let ro = s.find("ro '/home/r'").unwrap();
+        let rw = s.find("rw '/home/r/.cabal'").unwrap();
+        assert!(ro < rw, "writable holes go after the read-only mounts");
+        assert!(s.contains("ro '/tmp/ws'"));
+        assert!(s.contains("rw '/tmp/ws/.bin/candidate'"));
+        assert!(s.contains(r#"rw '/abs/it'\''s'"#));
+        assert!(s.contains("--reuid=1001 --regid=118 --clear-groups --no-new-privs"));
+        assert!(s.contains("'PATH=/a b:/c'"));
+        assert!(s.ends_with("bash -c './build.sh '\\''x'\\'''\n"), "{s}");
+        // The script itself must parse.
+        let ok = Command::new("bash")
+            .args(["-n", "-c", &s])
+            .status()
+            .unwrap();
+        assert!(ok.success());
     }
 
     #[test]

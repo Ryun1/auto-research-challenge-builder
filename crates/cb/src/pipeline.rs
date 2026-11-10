@@ -290,7 +290,19 @@ pub fn score(root: &Path, slug: &str, source: Source, sandbox: bool) -> Result<V
         return Ok(out);
     }
     if let Some(build) = &spec.commands.build {
-        let b = run_in(false, &env, &ws, build, 0);
+        // In CI (--sandbox), a challenge with [build_sandbox] builds in it (#51).
+        let b = match spec.build_sandbox.as_ref().filter(|_| sandbox) {
+            Some(bs) if preflight::build_sandbox_available() => {
+                preflight::run_mode(preflight::Mode::Build(bs), &env, &ws, build, 0)
+            }
+            Some(_) => {
+                out["status"] = "infra_failed".into();
+                out["reason"] =
+                    "build sandbox unavailable (needs Linux, sudo, unshare, setpriv)".into();
+                return Ok(out);
+            }
+            None => run_in(false, &env, &ws, build, 0),
+        };
         if !b.ok {
             out["status"] = "rejected".into();
             out["reason"] = format!("build: {}", b.detail).into();
