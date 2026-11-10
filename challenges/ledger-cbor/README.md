@@ -52,7 +52,10 @@ identifier than the baseline. `build.sh` repeats a quick denylist locally.
 reference, and copies each editable package to `cand/<name>`. `build.sh`
 syncs `candidate/<name>/src` over those and rebuilds incrementally: changed
 modules and their dependents up to Conway recompile, which is the
-per-submission cost. In CI the build runs in the build sandbox
+per-submission cost. The trusted Warm workflow (`warm.yml`, every 5 days and
+when the judge changes) prebuilds the reference and the baseline's
+`dist-cand` into a cache that score jobs restore, so a PR doesn't start from
+a 30-50 minute cold build (#54). In CI the build runs in the build sandbox
 (`[build_sandbox]`): no network, no sudo, its own pid namespace, and a
 read-only home and workspace except `.bin/candidate`. Cache writes go to a
 throwaway overlay.
