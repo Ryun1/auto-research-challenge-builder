@@ -46,6 +46,7 @@ rsync -a -c --delete harness/ "$L/ledger-cbor-harness/"
 # always cost one extra full build (build.sh rebuilds what changed).
 sed '/flags: +asserts/d' "$L/cabal.project" > "$L/cabal.project.ref"
 cp "$L/cabal.project.ref" "$L/cabal.project.cand"
+mkdir -p "$L/cand"
 grep -v '^#' packages.txt | while read -r name path; do
   [ -n "$name" ] || continue
   [ -d "$L/cand/$name" ] || rsync -a "$L/$path/" "$L/cand/$name/"
