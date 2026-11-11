@@ -102,7 +102,10 @@ jobs:
           SLUG: ${{ needs.detect.outputs.slug }}
           STAGE: ${{ needs.detect.outputs.stage }}
           CB_POOL: fresh
-          CB_UPSTREAM_TESTS: "1" # ledger-cbor: upstream test suites gate a promotion (#53)
+          # ledger-cbor: upstream's test suites gate a promotion (#53). Not the
+          # baseline: it is the pinned upstream tree, nothing is promoted, and
+          # Preflight runs the suites on it (upstream_tests input).
+          CB_UPSTREAM_TESTS: ${{ needs.detect.outputs.stage == 'promotion' && '1' || '0' }}
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: score-${{ matrix.n }}
@@ -145,7 +148,16 @@ jobs:
             msg="$msg; revert editable to record ${rc::7}"
           fi
           git commit -qam "$msg"
-          for i in 1 2 3; do git pull -q --rebase origin main && git push -q origin HEAD:main && break; sleep 5; done
+          # A rebase that conflicts (main moved under public/) left unmerged files, the
+          # next pulls failed, and the job ended green with nothing pushed (Promote
+          # 43060093096). Abort the rebase between tries and fail if nothing landed.
+          pushed=false
+          for i in 1 2 3; do
+            if git pull -q --rebase origin main && git push -q origin HEAD:main; then pushed=true; break; fi
+            git rebase --abort 2>/dev/null || true
+            sleep 5
+          done
+          $pushed || { echo "::error::the results commit was not pushed to main"; exit 1; }
         env:
           # Public feed location. Private repo on the Free plan: no Pages, raw URLs need a token.
           FEED_BASE: https://raw.githubusercontent.com/${{ github.repository }}/main/public
