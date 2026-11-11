@@ -2,7 +2,7 @@
 slug      = "pedersen"
 family    = "perf"
 direction = "maximise"
-status    = "open"           # draft | open | closed
+status    = "closed"         # draft | open | closed
 kit = "rust"
 runner    = "ubuntu-24.04"   # pinned image
 

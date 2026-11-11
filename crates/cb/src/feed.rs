@@ -305,15 +305,27 @@ mod tests {
         assert_eq!(toy["attempts"][0]["status"], "rejected"); // newest first
         assert_eq!(toy["feed"], "feeds/toy.json");
 
-        // A challenge without results still appears, without a feed.
+        // The site lists open challenges only: a draft is left off it.
         crate::challenge::scaffold(&root, "fresh", "math", None).unwrap();
+        let listed = |out: &Path| -> Vec<Value> {
+            let site: Value = serde_json::from_str(
+                &std::fs::read_to_string(out.join("challenges.json")).unwrap(),
+            )
+            .unwrap();
+            site["challenges"].as_array().unwrap().clone()
+        };
         assert_eq!(build(&root, &out, "https://x", "t").unwrap(), vec!["toy"]);
-        let site: Value =
-            serde_json::from_str(&std::fs::read_to_string(out.join("challenges.json")).unwrap())
-                .unwrap();
-        let fresh = &site["challenges"][0];
+        assert_eq!(listed(&out).len(), 1);
+        assert_eq!(listed(&out)[0]["slug"], "toy");
+        // Once open it appears, without results or a feed: baseline pending.
+        let toml = root.join("fresh/challenge.toml");
+        let text = std::fs::read_to_string(&toml).unwrap();
+        assert!(text.contains("\"draft\""));
+        std::fs::write(&toml, text.replacen("\"draft\"", "\"open\"", 1)).unwrap();
+        assert_eq!(build(&root, &out, "https://x", "t").unwrap(), vec!["toy"]);
+        let fresh = listed(&out)[0].clone();
         assert_eq!(fresh["slug"], "fresh");
-        assert_eq!(fresh["state"], "draft");
+        assert_eq!(fresh["state"], "pending");
         assert!(fresh["feed"].is_null() && fresh["baseline"].is_null());
         assert!(!out.join("feeds/fresh.json").exists());
     }
