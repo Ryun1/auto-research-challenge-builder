@@ -81,8 +81,14 @@ jobs:
           fetch-depth: 0 # --against-record extracts the record commit's editable tree
           persist-credentials: false
       - run: rustup toolchain install
-      - if: needs.detect.outputs.kit == 'rust'
-        run: sudo apt-get install -y -qq valgrind
+      - name: valgrind
+        if: needs.detect.outputs.kit == 'rust'
+        # apt-get update + retry: the mirrors' DNS flakes on hosted runners
+        run: |
+          for i in 1 2 3 4; do
+            sudo apt-get update -qq && sudo apt-get install -y -qq valgrind && break
+            [ "$i" = 4 ] && exit 1; sleep $((i * 20))
+          done
       - uses: ./.github/actions/haskell
         with:
           slug: ${{ needs.detect.outputs.slug }}

@@ -46,7 +46,11 @@ runs:
         sudo rm -rf /opt/google/chrome /opt/microsoft/msedge /opt/microsoft/powershell /opt/pipx \
           /usr/lib/mono /usr/local/julia* /usr/local/lib/android /usr/local/lib/node_modules \
           /usr/local/share/chromium /usr/local/share/powershell /usr/share/dotnet /usr/share/swift
-        sudo apt-get install -y -qq valgrind rsync
+        # apt-get update + retry: the mirrors' DNS flakes on hosted runners
+        for i in 1 2 3 4; do
+          sudo apt-get update -qq && sudo apt-get install -y -qq valgrind rsync && break
+          [ "$i" = 4 ] && exit 1; sleep $((i * 20))
+        done
         df -h /
     - name: System deps (libsodium, secp256k1, blst)
       if: steps.detect.outputs.haskell == 'true'

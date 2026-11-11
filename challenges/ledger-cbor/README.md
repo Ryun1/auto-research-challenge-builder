@@ -7,7 +7,7 @@ stack: `cardano-ledger-binary` (the `Decoder` monad, `Annotator`, coders,
 primitives), `cardano-ledger-core` and the era packages from Shelley to Conway
 (the per-field instances, `MaryValue`, `BabbageTxOut`, the Conway tx body...).
 
-Status: **draft**. Measure run 42721883592 profiled the reference: the
+Status: **open**. Measure run 42721883592 profiled the reference: the
 editable packages run about a quarter of the instructions directly (binary
 6%, mary 9%, core 3%, babbage/conway/alonzo 5%), and the RTS another 38%,
 much of it closure application and allocation that the decoders' shape
