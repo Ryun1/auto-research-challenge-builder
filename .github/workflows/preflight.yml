@@ -92,6 +92,7 @@ jobs:
         # Separate from cb preflight: the broken variants would fail these at
         # build time instead of reaching the verifier. Times the step for #53.
         if: inputs.upstream_tests && runner.os == 'Linux'
+        shell: bash # -o pipefail: a failing suite must fail the step, not tee
         run: |
           cd "challenges/$SLUG"
           start=$(date +%s)
