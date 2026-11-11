@@ -65,10 +65,20 @@ jobs:
             ./target/release/cb feed --out public --base-url "$FEED_BASE" --at "$(date -u +%FT%TZ)"
             git add public
             git commit -qm "results: PR #$PR attempt on $slug"
-            for i in 1 2 3; do git pull -q --rebase origin main && git push -q origin HEAD:main && break; sleep 5; done
+            # A rebase that conflicts (main moved under public/) left unmerged files, the
+            # next pulls failed, and the job ended green with nothing pushed (Promote
+            # 43060093096). Abort the rebase between tries and fail if nothing landed.
+            pushed=false
+            for i in 1 2 3; do
+              if git pull -q --rebase origin main && git push -q origin HEAD:main; then pushed=true; break; fi
+              git rebase --abort 2>/dev/null || true
+              sleep 5
+            done
           fi
           ./target/release/cb comment "${args[@]}" > body.md
           gh pr comment "$PR" --body-file body.md
+          # The PR still gets its comment; the lost record fails the job.
+          ${pushed:-true} || { echo "::error::the results commit was not pushed to main"; exit 1; }
         env:
           # Public feed location. Private repo on the Free plan: no Pages, raw URLs need a token.
           FEED_BASE: https://raw.githubusercontent.com/${{ github.repository }}/main/public

@@ -370,6 +370,9 @@ pub fn write(root: &Path, out: &Path, feeds: &[String], generated_at: &str) -> R
                 .map_err(|e| eprintln!("site: skipping {s}: {e}"))
                 .ok()
         })
+        // The site lists open challenges only; drafts and closed ones keep
+        // their feeds but aren't published on the page.
+        .filter(|c| c["status"] == "open")
         .collect();
     let data = json!({
         "site_schema_version": SITE_SCHEMA_VERSION,
