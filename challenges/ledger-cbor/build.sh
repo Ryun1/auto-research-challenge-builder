@@ -61,7 +61,7 @@ cp "$(cd "$L" && cabal list-bin --project-file=cabal.project.cand --builddir=dis
 # the output 0644 (it must exist to be mounted). Verify/score run it as nobody.
 chmod 755 .bin/candidate
 
-# #53: upstream's own test suites for every editable package, against the
+# #53: upstream's own test suites for the packages in upstream-tests.txt, against the
 # candidate (the harness only decodes Conway mempool txs at PV 11). Slow, so
 # opt-in: promotion and preflight set CB_UPSTREAM_TESTS=1. setup.sh fetched
 # their dependencies (the CI build has no network). Separate project and
@@ -69,7 +69,7 @@ chmod 755 .bin/candidate
 # see setup.sh), and dist-cand should stay warm for the harness.
 # The record's tree (CB_ROLE=record, paired promotion) passed them already.
 if [ "${CB_UPSTREAM_TESTS:-0}" = 1 ] && [ "${CB_ROLE:-candidate}" != record ]; then
-  targets=$(grep -v '^#' packages.txt | awk 'NF { print $1 ":test:tests" }')
+  targets=$(grep -v '^#' upstream-tests.txt | awk 'NF { print $1 ":test:tests" }')
   cd "$L"
   # shellcheck disable=SC2086
   cabal build -v1 --offline --project-file=cabal.project.test --builddir=dist-cand-test --enable-tests $targets
