@@ -80,8 +80,10 @@ jobs:
           name: gate
           path: gate
       - run: rustup toolchain install
-      - if: needs.gate.outputs.kit == 'rust'
-        run: sudo apt-get install -y -qq valgrind
+      - name: valgrind
+        if: needs.gate.outputs.kit == 'rust'
+        # update + retry + resolver fallback: Canonical's DNS stalls took CI, Warm and Preflight down
+        run: .github/scripts/apt-install.sh valgrind
       # From the base checkout, so trusted. Restores the cabal store, never saves
       # it: this job compiles submission code.
       - uses: ./.github/actions/haskell
