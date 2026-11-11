@@ -50,7 +50,12 @@ grep -v '^#' packages.txt | while read -r name path; do
   # -c: unchanged files keep their mtime, so GHC's recompilation check stays warm.
   rsync -a -c --delete "candidate/$name/src/" "$L/cand/$name/src/"
 done
-( cd "$L" && cabal build -v1 --project-file=cabal.project.cand --builddir=dist-cand ledger-cbor-harness )
+# --offline: CI builds with no network (build sandbox), and setup.sh already
+# downloaded everything. Without it cabal re-syncs the project's
+# source-repository-packages on the first build after setup's --only-download
+# and dies on "Could not resolve host: github.com" (Promote 43060093096, cold
+# ledger cache). With it cabal skips the sync and reads the existing checkouts.
+( cd "$L" && cabal build -v1 --offline --project-file=cabal.project.cand --builddir=dist-cand ledger-cbor-harness )
 cp "$(cd "$L" && cabal list-bin --project-file=cabal.project.cand --builddir=dist-cand ledger-cbor-harness)" .bin/candidate
 # cp onto an existing file keeps its mode, and the build sandbox pre-creates
 # the output 0644 (it must exist to be mounted). Verify/score run it as nobody.
@@ -67,10 +72,10 @@ if [ "${CB_UPSTREAM_TESTS:-0}" = 1 ] && [ "${CB_ROLE:-candidate}" != record ]; t
   targets=$(grep -v '^#' packages.txt | awk 'NF { print $1 ":test:tests" }')
   cd "$L"
   # shellcheck disable=SC2086
-  cabal build -v1 --project-file=cabal.project.test --builddir=dist-cand-test --enable-tests $targets
+  cabal build -v1 --offline --project-file=cabal.project.test --builddir=dist-cand-test --enable-tests $targets
   for t in $targets; do
     echo "upstream tests: $t"
-    timeout "${CB_UPSTREAM_TESTS_TIMEOUT:-1800}" cabal test -v1 --project-file=cabal.project.test \
+    timeout "${CB_UPSTREAM_TESTS_TIMEOUT:-1800}" cabal test -v1 --offline --project-file=cabal.project.test \
       --builddir=dist-cand-test --enable-tests --test-show-details=failures "$t" \
       || { echo "upstream tests failed: $t"; exit 1; }
   done
