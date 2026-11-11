@@ -13,7 +13,7 @@ Answer every question. "N/A" needs a reason.
 
 ## Does the benchmark interface match real use?
 
-Partly. The harness decodes full transactions the way the mempool receives them (`Annotator (MempoolTx ConwayEra)` at protocol version 11) with the node's own decoder. Block decoding takes the same body, witness and aux-data decoders, but splits them differently, and it isn't measured. We build without upstream's dev-only `+asserts` flags, as releases do. The src/ of cardano-ledger-binary, cardano-ledger-core and the Shelley..Conway era packages is editable, so the era instances (MaryValue, BabbageTxOut, the Conway tx body) are in scope. Those packages also hold the ledger rules, which the harness never runs: a change there can't move the score, and #53's upstream test suites are the check that it didn't break them.
+Partly. The harness decodes full transactions the way the mempool receives them (`Annotator (MempoolTx ConwayEra)` at protocol version 11) with the node's own decoder. Block decoding takes the same body, witness and aux-data decoders, but splits them differently, and it isn't measured. We build without upstream's dev-only `+asserts` flags, as releases do; only the upstream test suites (#53) are built with them, as upstream's CI does. The src/ of cardano-ledger-binary, cardano-ledger-core and the Shelley..Conway era packages is editable, so the era instances (MaryValue, BabbageTxOut, the Conway tx body) are in scope. Those packages also hold the ledger rules, which the harness never runs: a change there can't move the score, and #53's upstream test suites are the check that it didn't break them.
 
 ## What is the known bound or headroom?
 

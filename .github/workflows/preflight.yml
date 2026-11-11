@@ -33,8 +33,10 @@ jobs:
         with:
           persist-credentials: false
       - run: rustup toolchain install
-      - if: runner.os == 'Linux'
-        run: sudo apt-get install -y -qq valgrind # Rust kit scoring
+      - name: valgrind (Rust kit scoring)
+        if: runner.os == 'Linux'
+        # update + retry + resolver fallback: Canonical's DNS stalls took CI, Warm and Preflight down
+        run: .github/scripts/apt-install.sh valgrind
       - run: cargo build --locked --release
 
       # Haskell challenges only (Linux; macOS reports "no" at setup).
@@ -92,6 +94,7 @@ jobs:
         # Separate from cb preflight: the broken variants would fail these at
         # build time instead of reaching the verifier. Times the step for #53.
         if: inputs.upstream_tests && runner.os == 'Linux'
+        shell: bash # -o pipefail: a failing suite must fail the step, not tee
         run: |
           cd "challenges/$SLUG"
           start=$(date +%s)

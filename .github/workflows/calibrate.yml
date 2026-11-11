@@ -35,7 +35,13 @@ jobs:
       - name: Run under time + 60 min cap
         working-directory: target
         run: |
-          command -v /usr/bin/time >/dev/null || sudo apt-get install -y -qq time
+          if ! command -v /usr/bin/time >/dev/null; then
+            # apt-get update + retry: the mirrors' DNS flakes on hosted runners
+            for i in 1 2 3 4; do
+              sudo apt-get update -qq && sudo apt-get install -y -qq time && break
+              [ "$i" = 4 ] && exit 1; sleep $((i * 20))
+            done
+          fi
           before=$(df --output=used -B1 / | tail -1)
           mem0=$(free -b | awk '/^Mem:/{print $3}')
           # Whole-system memory, not just the largest process (time -v).
