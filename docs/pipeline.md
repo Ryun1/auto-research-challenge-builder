@@ -29,6 +29,34 @@ Changes from the original plan, with the reasons:
 - **PR-stage attempts are recorded** (`stage: "pr"`), so `results.jsonl` keeps
   the denominator even for PRs that are never merged.
 
+## Recording results
+
+Comment and Promote commit only `results.jsonl` (and, for a revert, the
+candidate) and push to `main` with a pull-rebase retry; a push that never lands
+fails the job (Comment posts its PR comment first). `.gitattributes` makes
+`results.jsonl` a union merge, so appends from concurrent runs both land in
+either order. The feeds and status site are not committed here: the Site
+workflow builds them from `main` and publishes them to
+https://ryun1.github.io/auto-research-challenges/ (feeds at
+`feeds/<slug>.json`).
+
+Concurrency, and what is left:
+
+- **Comment** is grouped per PR, so PRs never cancel each other or wait on a
+  Promote. Within one PR a third Submission completion while a Comment runs
+  cancels the pending one (in practice only cancelled Submission runs arrive
+  that fast). Comment reads the record from its checkout; if a promotion lands
+  before its push, its PR entry's `status` and `record_before` are against the
+  previous record. PR entries never set the record, so only that label is stale.
+- **Promote** runs are serialised (`promote` group) because each decides
+  against the record the last one left. A third merge while one promotes
+  cancels the pending second, which is then never scored or reverted: merge
+  one submission at a time and wait for its Promote.
+- **Promote's revert** is computed on the `main` it checked out. If another
+  merge touched the same candidate files meanwhile, the rebase conflicts and
+  the job fails with nothing recorded; if it touched other files, the revert
+  lands and leaves a mix. Merging one at a time avoids both.
+
 ## Launching a challenge
 
 1. Set `status = "open"` in `challenge.toml`, and get `cb preflight <slug>` to

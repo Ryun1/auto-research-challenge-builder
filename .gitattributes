@@ -1,0 +1,3 @@
+# Concurrent Comment and Promote runs each append a line; a rebase onto the
+# other keeps both instead of conflicting. Order between runs is not kept.
+challenges/*/results.jsonl merge=union

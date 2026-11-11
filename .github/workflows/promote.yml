@@ -21,8 +21,12 @@ on:
 permissions:
   contents: read
 
+# Promotions are serialised: each decides against the record the previous one
+# left (a stale pairing is infra_failed). The group holds one pending run, so
+# a third merge while one promotes cancels the second: merge one at a time.
+# Comment has its own groups; its appends union-merge with this one's.
 concurrency:
-  group: results
+  group: promote
   cancel-in-progress: false
 
 jobs:
@@ -137,8 +141,6 @@ jobs:
           git config user.name "cb-bot"
           git config user.email "cb-bot@users.noreply.github.com"
           git add "challenges/$SLUG/results.jsonl"
-          ./target/release/cb feed --out public --base-url "$FEED_BASE" --at "$(date -u +%FT%TZ)"
-          git add public
           msg="results: $SLUG $STAGE $status (${SHA::7})"
           if [ "$STAGE" = promotion ] && [ "$status" != promoted ]; then
             rc=$(jq -r .record_commit decision.json)
@@ -148,19 +150,18 @@ jobs:
             msg="$msg; revert editable to record ${rc::7}"
           fi
           git commit -qam "$msg"
-          # A rebase that conflicts (main moved under public/) left unmerged files, the
-          # next pulls failed, and the job ended green with nothing pushed (Promote
-          # 43060093096). Abort the rebase between tries and fail if nothing landed.
+          # Only results.jsonl (union-merged) and, on a revert, the candidate are
+          # committed; the Site workflow publishes the feeds. A rebase that still
+          # conflicts (a merge touched the reverted files) is aborted, and nothing
+          # pushed fails the job (Promote 43060093096 ended green with nothing recorded).
           pushed=false
-          for i in 1 2 3; do
+          for i in 1 2 3 4 5; do
             if git pull -q --rebase origin main && git push -q origin HEAD:main; then pushed=true; break; fi
             git rebase --abort 2>/dev/null || true
-            sleep 5
+            sleep $((RANDOM % 10 + 3)) # jitter: Comment runs push concurrently
           done
           $pushed || { echo "::error::the results commit was not pushed to main"; exit 1; }
         env:
-          # Public feed location. Private repo on the Free plan: no Pages, raw URLs need a token.
-          FEED_BASE: https://raw.githubusercontent.com/${{ github.repository }}/main/public
           SLUG: ${{ needs.detect.outputs.slug }}
           STAGE: ${{ needs.detect.outputs.stage }}
           SHA: ${{ github.sha }}
