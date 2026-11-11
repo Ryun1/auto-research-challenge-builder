@@ -22,12 +22,8 @@ jobs:
           persist-credentials: false
       - run: rustup toolchain install # reads rust-toolchain.toml
       - name: valgrind (Rust kit scoring, callgrind)
-        # apt-get update + retry: the mirrors' DNS flakes on hosted runners
-        run: |
-          for i in 1 2 3 4; do
-            sudo apt-get update -qq && sudo apt-get install -y -qq valgrind && break
-            [ "$i" = 4 ] && exit 1; sleep $((i * 20))
-          done
+        # update + retry + resolver fallback: Canonical's DNS stalls took CI, Warm and Preflight down
+        run: .github/scripts/apt-install.sh valgrind
       - run: cargo fmt --all --check
       - run: cargo fmt --all --check --manifest-path kits/rust/Cargo.toml
       - run: cargo clippy --locked --all-targets -- -D warnings

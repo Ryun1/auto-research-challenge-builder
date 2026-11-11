@@ -82,12 +82,8 @@ jobs:
       - run: rustup toolchain install
       - name: valgrind
         if: needs.gate.outputs.kit == 'rust'
-        # apt-get update + retry: the mirrors' DNS flakes on hosted runners
-        run: |
-          for i in 1 2 3 4; do
-            sudo apt-get update -qq && sudo apt-get install -y -qq valgrind && break
-            [ "$i" = 4 ] && exit 1; sleep $((i * 20))
-          done
+        # update + retry + resolver fallback: Canonical's DNS stalls took CI, Warm and Preflight down
+        run: .github/scripts/apt-install.sh valgrind
       # From the base checkout, so trusted. Restores the cabal store, never saves
       # it: this job compiles submission code.
       - uses: ./.github/actions/haskell

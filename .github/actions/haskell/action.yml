@@ -46,11 +46,10 @@ runs:
         sudo rm -rf /opt/google/chrome /opt/microsoft/msedge /opt/microsoft/powershell /opt/pipx \
           /usr/lib/mono /usr/local/julia* /usr/local/lib/android /usr/local/lib/node_modules \
           /usr/local/share/chromium /usr/local/share/powershell /usr/share/dotnet /usr/share/swift
-        # apt-get update + retry: the mirrors' DNS flakes on hosted runners
-        for i in 1 2 3 4; do
-          sudo apt-get update -qq && sudo apt-get install -y -qq valgrind rsync && break
-          [ "$i" = 4 ] && exit 1; sleep $((i * 20))
-        done
+        # update + retry + resolver fallback: Canonical's DNS stalls took CI, Warm and Preflight down.
+        # libsystemd-dev and liburing-dev are what the base action below apt-installs
+        # with no retry; installed here, its install has nothing to fetch.
+        "$GITHUB_ACTION_PATH/../../scripts/apt-install.sh" valgrind rsync libsystemd-dev liburing-dev
         df -h /
     - name: System deps (libsodium, secp256k1, blst)
       if: steps.detect.outputs.haskell == 'true'
