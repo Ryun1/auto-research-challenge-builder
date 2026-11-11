@@ -17,6 +17,11 @@ outputs:
     value: ${{ steps.detect.outputs.key }}
   cache-hit:
     value: ${{ steps.cache.outputs.cache-hit }}
+  ledger-key:
+    description: key of the prebuilt challenge cache (~/.cache/cb-<slug>), saved only by warm.yml
+    value: ${{ steps.detect.outputs.ledger-key }}
+  ledger-hit:
+    value: ${{ steps.ledger.outputs.cache-hit }}
 runs:
   using: composite
   steps:
@@ -27,6 +32,11 @@ runs:
         if compgen -G "challenges/$SLUG/harness/*.cabal" > /dev/null; then h=true; else h=false; fi
         echo "haskell=$h" | tee -a "$GITHUB_OUTPUT"
         echo "key=cabal-$SLUG-$(sha256sum "challenges/$SLUG/setup.sh" 2>/dev/null | cut -c1-16)" >> "$GITHUB_OUTPUT"
+        # The prebuilt reference + warm baseline build (#54): everything that
+        # shapes them (pin, package list, harness, build script, baseline).
+        lk=$(cd "challenges/$SLUG" && { cat setup.sh build.sh packages.txt harness/*; \
+          find baseline -type f | LC_ALL=C sort | xargs cat; } 2>/dev/null | sha256sum | cut -c1-16)
+        echo "ledger-key=cb-$SLUG-$lk" >> "$GITHUB_OUTPUT"
       env:
         SLUG: ${{ inputs.slug }}
     - name: Free disk space (as cardano-ledger's CI does)
@@ -68,3 +78,10 @@ runs:
         path: ${{ steps.hs.outputs.cabal-store }}
         key: ${{ steps.detect.outputs.key }}
         restore-keys: cabal-${{ inputs.slug }}-
+    - name: Restore the prebuilt reference and warm baseline build (#54)
+      id: ledger
+      if: steps.detect.outputs.haskell == 'true'
+      uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        path: ~/.cache/cb-${{ inputs.slug }}
+        key: ${{ steps.detect.outputs.ledger-key }}

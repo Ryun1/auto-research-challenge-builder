@@ -265,7 +265,7 @@ mod tests {
     fn feed_from_a_recorded_challenge() {
         let dir = crate::pipeline::tests::repo();
         let root = dir.join("challenges");
-        let run = |src| score(&root, "toy", src, false).unwrap();
+        let run = |src| score(&root, "toy", src, false, None).unwrap();
         let at = |stage, commit, by| Attempt {
             stage,
             commit,

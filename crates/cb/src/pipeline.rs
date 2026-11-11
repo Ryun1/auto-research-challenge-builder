@@ -11,7 +11,7 @@
 
 use crate::challenge::Spec;
 use crate::preflight::{self, host, metrics, run_in, verify_ok};
-use crate::{paths, policy, rustpolicy};
+use crate::{haskellpolicy, paths, policy, rustpolicy};
 use serde_json::{json, Value};
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -197,6 +197,15 @@ pub fn gate(repo: &Path, root: &str, base: &str, head: &str, out: &Path) -> Gate
             }
         }
     }
+    if let Some(hs) = &spec.haskell {
+        let base = repo.join(root).join(&slug).join("baseline");
+        for e in &spec.paths.editable {
+            let dir = out.join(root).join(&slug).join(e.trim_end_matches('/'));
+            if let Err(errs) = haskellpolicy::check(&base, &dir, &hs.src) {
+                g.errors.extend(errs);
+            }
+        }
+    }
     g
 }
 
@@ -215,7 +224,64 @@ pub enum Source<'a> {
 /// Builds and scores one challenge. Setup and build run as the current user
 /// (the build is the only step that compiles submission bytes, and the kit
 /// forbids build scripts); verify and score run sandboxed when asked.
-pub fn score(root: &Path, slug: &str, source: Source, sandbox: bool) -> Result<Value, String> {
+/// Replaces `ws/<editable>` with the contents of `from`.
+fn fill_editable(ws: &Path, editable: &str, from: &Path) -> Result<(), String> {
+    let target = ws.join(editable);
+    let _ = std::fs::remove_dir_all(&target);
+    std::fs::create_dir_all(&target).map_err(|e| e.to_string())?;
+    let ok = Command::new("cp")
+        .arg("-R")
+        .arg(from.join("."))
+        .arg(&target)
+        .status()
+        .map_err(|e| e.to_string())?
+        .success();
+    if ok {
+        Ok(())
+    } else {
+        Err(format!("copying {} into the workspace", from.display()))
+    }
+}
+
+/// The current record's commit and its editable tree, extracted with
+/// `git archive` from the repo that holds `root` (for `score --against`).
+pub fn record_tree(root: &Path, slug: &str) -> Result<Option<(String, PathBuf)>, String> {
+    let Some(commit) = record_commit(root, slug)? else {
+        return Ok(None);
+    };
+    let spec = Spec::load(&root.join(slug))?;
+    let [editable] = &spec.paths.editable[..] else {
+        return Err("one editable path supported".into());
+    };
+    let editable = editable.trim_end_matches('/');
+    let out = paths::scratch(&format!("record-{slug}"));
+    std::fs::create_dir_all(&out).map_err(|e| e.to_string())?;
+    // Paths relative to the repo top, which git archive wants.
+    let rel = git_str(root, &["rev-parse", "--show-prefix"])?;
+    let path = format!("{rel}{slug}/{editable}");
+    let top = PathBuf::from(git_str(root, &["rev-parse", "--show-toplevel"])?);
+    let tar = git(&top, &["archive", "--format=tar", &commit, "--", &path])?;
+    let mut child = Command::new("tar")
+        .args(["-x", "-C"])
+        .arg(&out)
+        .stdin(std::process::Stdio::piped())
+        .spawn()
+        .map_err(|e| format!("tar: {e}"))?;
+    use std::io::Write;
+    let _ = child.stdin.take().map(|mut s| s.write_all(&tar));
+    if !child.wait().map(|s| s.success()).unwrap_or(false) {
+        return Err(format!("extracting {path} at {commit}"));
+    }
+    Ok(Some((commit, out.join(path))))
+}
+
+pub fn score(
+    root: &Path,
+    slug: &str,
+    source: Source,
+    sandbox: bool,
+    against: Option<(&str, &Path)>,
+) -> Result<Value, String> {
     let dir = root.join(slug);
     let spec = Spec::load(&dir)?;
     let [editable] = &spec.paths.editable[..] else {
@@ -245,19 +311,7 @@ pub fn score(root: &Path, slug: &str, source: Source, sandbox: bool) -> Result<V
         ),
     };
     if let Some(from) = fill {
-        let target = ws.join(editable);
-        let _ = std::fs::remove_dir_all(&target);
-        std::fs::create_dir_all(&target).map_err(|e| e.to_string())?;
-        let ok = Command::new("cp")
-            .arg("-R")
-            .arg(from.join("."))
-            .arg(&target)
-            .status()
-            .map_err(|e| e.to_string())?
-            .success();
-        if !ok {
-            return Err(format!("copying {} into the workspace", from.display()));
-        }
+        fill_editable(&ws, editable, &from)?;
     }
     let env: Vec<(String, String)> = spec
         .perf
@@ -280,15 +334,74 @@ pub fn score(root: &Path, slug: &str, source: Source, sandbox: bool) -> Result<V
         out["reason"] = format!("setup: {}", setup.detail).into();
         return Ok(out);
     }
+    // Paired (promotion): the record's editable tree in a copy of the set-up
+    // workspace, so both see the same setup outputs (e.g. one fresh pool) and
+    // get the same seed. Pool-to-pool variance then cancels in the ratio (#57).
+    let rec_ws = match against {
+        Some((_, tree)) => {
+            let w = paths::scratch(&format!("score-{slug}-record"));
+            let ok = Command::new("cp")
+                .arg("-R")
+                .arg(&ws)
+                .arg(&w)
+                .status()
+                .map_err(|e| e.to_string())?
+                .success();
+            if !ok {
+                return Err("copying the workspace for the record".into());
+            }
+            fill_editable(&w, editable, tree)?;
+            Some(w)
+        }
+        None => None,
+    };
+    // Builds learn their role (CB_ROLE=candidate|record): a challenge can
+    // skip slow checks the record already passed (ledger-cbor's upstream tests).
+    let build_in = |w: &Path, build: &str| -> preflight::Run {
+        let role = if rec_ws.as_deref() == Some(w) {
+            "record"
+        } else {
+            "candidate"
+        };
+        let env: Vec<(String, String)> = env
+            .iter()
+            .cloned()
+            .chain([("CB_ROLE".to_string(), role.to_string())])
+            .collect();
+        let env = &env[..];
+        // In CI (--sandbox), a challenge with [build_sandbox] builds in it (#51).
+        match spec.build_sandbox.as_ref().filter(|_| sandbox) {
+            Some(bs) if preflight::build_sandbox_available() => {
+                preflight::run_mode(preflight::Mode::Build(bs), env, w, build, 0)
+            }
+            Some(_) => preflight::Run {
+                ok: false,
+                stdout: String::new(),
+                secs: 0.0,
+                detail: "build sandbox unavailable (needs Linux, sudo, unshare, setpriv)".into(),
+            },
+            None => run_in(false, env, w, build, 0),
+        }
+    };
     if let Some(build) = &spec.commands.build {
-        let b = run_in(false, &env, &ws, build, 0);
+        let b = build_in(&ws, build);
         if !b.ok {
             out["status"] = "rejected".into();
             out["reason"] = format!("build: {}", b.detail).into();
             return Ok(out);
         }
+        if let Some(rw) = &rec_ws {
+            let b = build_in(rw, build);
+            if !b.ok {
+                out["status"] = "infra_failed".into();
+                out["reason"] = format!("record build: {}", b.detail).into();
+                return Ok(out);
+            }
+        }
     }
-    let _ = Command::new("chmod").args(["-R", "a+rX"]).arg(&ws).status();
+    for w in std::iter::once(&ws).chain(&rec_ws) {
+        let _ = Command::new("chmod").args(["-R", "a+rX"]).arg(w).status();
+    }
     // The seed is drawn only now, after the build.
     let seed = preflight::seed();
     out["seed"] = seed.to_string().into();
@@ -317,6 +430,32 @@ pub fn score(root: &Path, slug: &str, source: Source, sandbox: bool) -> Result<V
     .into();
     if out["status"] == "rejected" {
         out["reason"] = "wall-time guard: regressed".into();
+    }
+    if let (Some(rw), Some((commit, _))) = (&rec_ws, against) {
+        let rv = run_in(sandbox, &env, rw, &spec.commands.verify, seed);
+        let rs = run_in(sandbox, &env, rw, &spec.commands.score, seed);
+        let r_value =
+            metrics(&rs).and_then(|m| m.get(&spec.objective.expr).and_then(Value::as_f64));
+        match (verify_ok(&rv), r_value, value) {
+            (true, Some(r), Some(c)) if r != 0.0 => {
+                out["paired"] = json!({"commit": commit, "value": r, "ratio": c / r});
+            }
+            _ => {
+                if out["status"] == "valid" {
+                    out["status"] = "infra_failed".into();
+                    out["reason"] = format!(
+                        "the record ({commit}) did not verify and score on this sample: {}",
+                        if verify_ok(&rv) {
+                            rs.detail
+                        } else {
+                            rv.stdout.chars().take(300).collect()
+                        }
+                    )
+                    .into();
+                }
+            }
+        }
+        let _ = std::fs::remove_dir_all(rw);
     }
     let _ = std::fs::remove_dir_all(&ws);
     Ok(out)
@@ -395,8 +534,18 @@ pub fn record(root: &Path, slug: &str, runs: &[Value], a: &Attempt) -> Result<Va
     let values: Vec<Option<f64>> = runs.iter().map(|r| r["value"].as_f64()).collect();
     let record = current_record(&results);
     let record_value = record.and_then(|r| r["value"].as_f64());
+    // Paired promotion runs (#57) carry candidate/record measured on one
+    // sample; decide and check agreement on that, not on values from
+    // different samples.
+    let ratios: Vec<Option<f64>> = runs.iter().map(|r| r["paired"]["ratio"].as_f64()).collect();
+    let paired = a.stage == "promotion" && ratios.iter().all(Option::is_some);
+    let record_commit_now = record.and_then(|r| r["commit"].as_str());
+    let stale = paired
+        && runs
+            .iter()
+            .any(|r| r["paired"]["commit"].as_str() != record_commit_now);
     // Independent runs must agree within half the bar (exactly, if the bar is 0).
-    let agree = match values[..] {
+    let agree = match (if paired { &ratios } else { &values })[..] {
         [Some(x), Some(y)] => ((x - y).abs() / x.abs().max(f64::MIN_POSITIVE)) <= m / 2.0,
         [Some(_)] => true,
         _ => false,
@@ -414,6 +563,14 @@ pub fn record(root: &Path, slug: &str, runs: &[Value], a: &Attempt) -> Result<Va
                     .filter_map(|r| r["reason"].as_str())
                     .collect::<Vec<_>>()
                     .join("; "),
+            )
+        } else if stale {
+            (
+                "infra_failed",
+                format!(
+                    "paired against a record other than the current one ({})",
+                    record_commit_now.unwrap_or("none")
+                ),
             )
         } else if !agree {
             (
@@ -433,17 +590,31 @@ pub fn record(root: &Path, slug: &str, runs: &[Value], a: &Attempt) -> Result<Va
                         .into(),
                 ),
                 Some(rec) => {
-                    let better = if maximise {
-                        v > rec && v >= rec * (1.0 + m)
-                    } else {
-                        v < rec && v <= rec * (1.0 - m)
+                    let ratio = ratios.iter().flatten().sum::<f64>() / ratios.len().max(1) as f64;
+                    let better = match (paired, maximise) {
+                        (true, true) => ratio > 1.0 && ratio >= 1.0 + m,
+                        (true, false) => ratio < 1.0 && ratio <= 1.0 - m,
+                        (false, true) => v > rec && v >= rec * (1.0 + m),
+                        (false, false) => v < rec && v <= rec * (1.0 - m),
                     };
-                    if better && a.stage == "promotion" {
+                    if better && a.stage == "promotion" && paired {
+                        (
+                            "promoted",
+                            format!("candidate/record = {ratio} on the same samples (bar {m})"),
+                        )
+                    } else if better && a.stage == "promotion" {
                         ("promoted", format!("{} beats {rec} by >= {m}", v))
                     } else if better {
                         (
                             "valid_claim_better",
                             format!("claims {v} vs record {rec}; promotion decides"),
+                        )
+                    } else if paired {
+                        (
+                            "valid_not_promoted",
+                            format!(
+                            "candidate/record = {ratio} on the same samples: not past the bar {m}"
+                        ),
                         )
                     } else {
                         (
@@ -461,7 +632,9 @@ pub fn record(root: &Path, slug: &str, runs: &[Value], a: &Attempt) -> Result<Va
         "expr": spec.objective.expr, "value": if values.iter().all(Option::is_some) { json!(mean) } else { Value::Null },
         "record_before": record_value,
         "runs": runs.iter().map(|r| json!({"seed": r["seed"], "host": r["host"], "host_policy": r["host_policy"], "value": r["value"], "status": r["status"],
-                                           "metrics": r["metrics"], "sandboxed": r["sandboxed"]})).collect::<Vec<_>>(),
+                                           "metrics": r["metrics"], "sandboxed": r["sandboxed"], "paired": r["paired"],
+                                           // which inputs were scored (e.g. a fresh pool's provenance)
+                                           "verify_detail": r["verify"]["detail"]})).collect::<Vec<_>>(),
     });
     let path = results_path(root, slug);
     let mut line = serde_json::to_string(&entry).map_err(|e| e.to_string())?;
@@ -643,7 +816,7 @@ pub(crate) mod tests {
     fn score_and_record_flow() {
         let dir = repo();
         let root = dir.join("challenges");
-        let run = |src: Source| score(&root, "toy", src, false).unwrap();
+        let run = |src: Source| score(&root, "toy", src, false, None).unwrap();
         let at = Attempt {
             stage: "baseline",
             commit: "c0",
@@ -710,6 +883,59 @@ pub(crate) mod tests {
         assert_eq!(record_commit(&root, "toy").unwrap().as_deref(), Some("c1"));
     }
 
+    /// #57: promotion scores the record's tree on the same sample and decides
+    /// on candidate/record.
+    #[test]
+    fn paired_promotion() {
+        let dir = repo();
+        let root = dir.join("challenges");
+        let base_sha = git_str(&dir, &["rev-parse", "HEAD"]).unwrap();
+        let at = Attempt {
+            stage: "baseline",
+            commit: &base_sha,
+            by: "baseline",
+            model: "",
+            at: "t0",
+        };
+        let b = [
+            score(&root, "toy", Source::Baseline, false, None).unwrap(),
+            score(&root, "toy", Source::Baseline, false, None).unwrap(),
+        ];
+        record(&root, "toy", &b, &at).unwrap();
+
+        // The candidate in the working tree is 60; the record's tree is 50.
+        std::fs::write(root.join("toy/candidate/answer"), "60\n").unwrap();
+        let (commit, tree) = record_tree(&root, "toy").unwrap().unwrap();
+        assert_eq!(commit, base_sha);
+        assert_eq!(
+            std::fs::read_to_string(tree.join("answer")).unwrap(),
+            "50\n"
+        );
+        let run = || score(&root, "toy", Source::AsIs, false, Some((&commit, &tree))).unwrap();
+        let r = [run(), run()];
+        assert_eq!(r[0]["paired"]["ratio"], json!(1.2), "{}", r[0]);
+        assert_eq!(r[0]["paired"]["value"], json!(50.0));
+
+        // Paired against some other commit: refused.
+        let mut stale = r.clone();
+        for x in &mut stale {
+            x["paired"]["commit"] = "deadbeef".into();
+        }
+        let p = Attempt {
+            stage: "promotion",
+            commit: "c1",
+            ..at
+        };
+        assert_eq!(
+            record(&root, "toy", &stale, &p).unwrap()["status"],
+            "infra_failed"
+        );
+        let e = record(&root, "toy", &r, &p).unwrap();
+        assert_eq!(e["status"], "promoted", "{e}");
+        assert!(e["reason"].as_str().unwrap().contains("same samples"));
+        assert_eq!(e["runs"][0]["paired"]["ratio"], json!(1.2));
+    }
+
     #[test]
     fn disagreeing_runs_are_infra_failures() {
         let dir = repo();
@@ -753,6 +979,78 @@ pub(crate) mod tests {
             !envs.contains("TOKEN") && !envs.contains("ACTIONS_") && !envs.contains("GITHUB_"),
             "{envs}"
         );
+    }
+
+    /// The build sandbox (#51), on a Linux runner: the build runs as us but
+    /// can only write its outputs; cache writes vanish; nothing outlives it.
+    #[test]
+    fn build_sandbox_contains_the_build() {
+        if std::env::var_os("CB_REQUIRE_SANDBOX").is_none() {
+            eprintln!("skipped: set CB_REQUIRE_SANDBOX on a Linux runner");
+            return;
+        }
+        assert!(preflight::build_sandbox_available());
+        let home = std::env::var("HOME").unwrap();
+        let cache = format!("{home}/.cache/cb-build-sandbox-test");
+        let ws = paths::scratch("build-sandbox");
+        std::fs::create_dir_all(ws.join(".bin")).unwrap();
+        std::fs::write(ws.join(".bin/reference"), "judge").unwrap();
+        let bs = crate::challenge::BuildSandbox {
+            writable: vec![cache.clone()],
+            outputs: vec![".bin/candidate".into()],
+        };
+        let sh = |cmd: &str| preflight::run_mode(preflight::Mode::Build(&bs), &[], &ws, cmd, 0);
+        let me = unsafe { libc::getuid() }.to_string();
+        assert_eq!(sh("id -u").stdout.trim(), me);
+        assert_eq!(
+            sh("id -G").stdout.trim(),
+            sh("id -g").stdout.trim(),
+            "groups not cleared"
+        );
+        assert!(sh("echo built > .bin/candidate").ok, "output not writable");
+        assert_eq!(
+            std::fs::read_to_string(ws.join(".bin/candidate")).unwrap(),
+            "built\n"
+        );
+        assert!(
+            sh(&format!("echo x > {cache}/f && cat {cache}/f")).ok,
+            "cache not writable inside"
+        );
+        assert!(
+            !Path::new(&cache).join("f").exists(),
+            "cache write outlived the build"
+        );
+        for (what, cmd) in [
+            ("reference", "echo pwn > .bin/reference"),
+            ("workspace", "echo pwn > score.json"),
+            ("home", "echo pwn > \"$HOME/.cb-pwn\""),
+            (
+                "runner work dir",
+                "touch \"$GITHUB_WORKSPACE/pwn\" || touch \"$HOME/work/pwn\"",
+            ),
+            ("toolcache", "touch /opt/pwn"),
+            ("network", "exec 3<>/dev/tcp/1.1.1.1/53"),
+            ("sudo", "sudo -n true"),
+            ("docker", "test -w /var/run/docker.sock && echo > /dev/null"),
+        ] {
+            assert!(!sh(cmd).ok, "{what}: {cmd} succeeded");
+        }
+        assert_eq!(
+            std::fs::read_to_string(ws.join(".bin/reference")).unwrap(),
+            "judge"
+        );
+        // Nothing outlives the build.
+        sh("(sleep 30; echo late > /tmp/cb-late) & disown; exit 0");
+        std::thread::sleep(std::time::Duration::from_millis(500));
+        let ps = Command::new("pgrep")
+            .args(["-f", "sleep 30"])
+            .output()
+            .unwrap();
+        assert!(
+            !ps.status.success(),
+            "a background process survived the build"
+        );
+        let _ = std::fs::remove_dir_all(&ws);
     }
 
     #[test]

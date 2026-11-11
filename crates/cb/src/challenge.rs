@@ -20,6 +20,10 @@ pub struct Spec {
     pub perf: Option<Perf>,
     /// Rust kit only.
     pub rust: Option<RustOpts>,
+    /// Haskell source policy (no kit): checked by `cb gate` and preflight.
+    pub haskell: Option<HaskellOpts>,
+    /// Build in CI with a read-only filesystem except these (see preflight::Mode::Build).
+    pub build_sandbox: Option<BuildSandbox>,
     #[serde(default)]
     pub inputs: Inputs,
 }
@@ -81,6 +85,34 @@ pub struct RustOpts {
     /// Opt-in token groups: "unsafe", "asm", "target_feature".
     #[serde(default)]
     pub allow: Vec<String>,
+}
+
+/// What a sandboxed CI build may write. Everything else under `$HOME`,
+/// `/opt`, `/usr/local` and the workspace is read-only.
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct BuildSandbox {
+    /// Absolute or `~/`-relative dirs (caches, build dirs), writable through a
+    /// throwaway overlay: the build's writes there vanish when it ends.
+    #[serde(default)]
+    pub writable: Vec<String>,
+    /// Files in the workspace the build writes (e.g. `.bin/candidate`).
+    #[serde(default)]
+    pub outputs: Vec<String>,
+}
+
+/// The editable path is a Haskell package; only `src` may differ from the
+/// baseline, under the allowlist in `haskellpolicy`.
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct HaskellOpts {
+    /// Source dirs relative to the editable path, each a module root.
+    #[serde(default = "default_hs_src")]
+    pub src: Vec<String>,
+}
+
+fn default_hs_src() -> Vec<String> {
+    vec!["src".into()]
 }
 
 #[derive(Debug, Deserialize)]

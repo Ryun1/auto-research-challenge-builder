@@ -4,6 +4,7 @@
 //! is the laptop profile (`--local`, or the preflight workflow on
 //! macos/ubuntu runners) and the hostable measurement.
 
+use crate::challenge::BuildSandbox;
 use crate::challenge::Spec;
 use crate::policy;
 use crate::rubric::{Fact, HOSTED};
@@ -13,6 +14,7 @@ use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
 
 /// Broken candidates every challenge must ship, each of which must fail verify.
+/// A challenge may add more under `preflight/broken/` (see `broken_variants`).
 pub const BROKEN: [&str; 3] = ["off-by-one", "partial", "constant"];
 /// provably.fast runs three no-change sessions (campaign_freeze.py:3201).
 const AA_SESSIONS: usize = 3;
@@ -174,9 +176,173 @@ pub(crate) fn run_in(
     cmd: &str,
     seed: u64,
 ) -> Run {
+    let mode = if sandbox { Mode::Judge } else { Mode::Plain };
+    run_mode(mode, env, dir, cmd, seed)
+}
+
+/// How a challenge command runs.
+pub(crate) enum Mode<'a> {
+    /// As the current user (setup; builds outside CI).
+    Plain,
+    /// Verify/score: as `nobody`, no network (see [`run_in`]).
+    Judge,
+    /// The build in CI (#51): as the current user, so caches and toolchains
+    /// work, but in a private mount namespace where `$HOME`, `/opt`,
+    /// `/usr/local` and the workspace are read-only except the declared
+    /// writable dirs and outputs. No network, its own pid namespace and /proc
+    /// (nothing outlives it), no supplementary groups (docker), no_new_privs
+    /// (no sudo), and `/run/user` hidden (no systemd/dbus user session). So
+    /// it can't touch the checkout, the runner's action code, `$GITHUB_ENV`
+    /// files or the reference binary that later trusted steps rely on.
+    Build(&'a BuildSandbox),
+}
+
+/// Linux with passwordless sudo, unshare and setpriv (CI runners).
+pub(crate) fn build_sandbox_available() -> bool {
+    cfg!(target_os = "linux")
+        && Command::new("sudo")
+            .args(["-n", "sh", "-c", "command -v unshare && command -v setpriv"])
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status()
+            .is_ok_and(|s| s.success())
+}
+
+/// Single-quotes a string for bash.
+fn sq(s: &str) -> String {
+    format!("'{}'", s.replace('\'', "'\\''"))
+}
+
+/// The mount script for [`Mode::Build`]: runs as root inside the new
+/// namespaces, then drops to the caller's uid.
+pub(crate) fn build_script(
+    b: &BuildSandbox,
+    dir: &Path,
+    home: &str,
+    uid: u32,
+    gid: u32,
+    vars: &[(String, String)],
+    cmd: &str,
+) -> String {
+    let expand = |p: &str| match p.strip_prefix("~/") {
+        Some(r) => format!("{home}/{r}"),
+        None => p.to_string(),
+    };
+    // Writable dirs are overlays whose upper layer lives in a root-only scratch
+    // dir, deleted when the build ends: the build sees its own writes, but
+    // nothing it writes to a cache or toolchain dir outlives it. Outputs are
+    // the only writes that persist.
+    let mut s = String::from(
+        "set -eu\n\
+         ro() { [ -e \"$1\" ] || return 0; mount --bind \"$1\" \"$1\"; mount -o remount,bind,ro \"$1\"; }\n\
+         rw() { mount --bind \"$1\" \"$1\"; mount -o remount,bind,rw \"$1\"; }\n\
+         ovl_n=0\n\
+         ovl() { ovl_n=$((ovl_n+1)); mkdir -p \"$scratch/$ovl_n/u\" \"$scratch/$ovl_n/w\"; \
+         chown --reference=\"$1\" \"$scratch/$ovl_n/u\"; chmod --reference=\"$1\" \"$scratch/$ovl_n/u\"; \
+         mount -t overlay overlay -o \"lowerdir=$1,upperdir=$scratch/$ovl_n/u,workdir=$scratch/$ovl_n/w\" \"$1\"; }\n\
+         scratch=$(mktemp -d /var/tmp/cb-build.XXXXXX)\n\
+         trap 'rm -rf \"$scratch\"' EXIT\n",
+    );
+    for p in [home, "/opt", "/usr/local", &dir.display().to_string()] {
+        s += &format!("ro {}\n", sq(p));
+    }
+    s += "[ ! -d /run/user ] || mount -t tmpfs -o size=1m,mode=755 tmpfs /run/user\n";
+    for w in &b.writable {
+        s += &format!("ovl {}\n", sq(&expand(w)));
+    }
+    for o in &b.outputs {
+        s += &format!("rw {}\n", sq(&dir.join(o).display().to_string()));
+    }
+    // A bind mount copies the read-only flag of the mount it came from, so rw()
+    // remounts its target writable. This shell's cwd still points at the
+    // workspace's original writable mount, and the build would inherit it:
+    // cd again so the cwd goes through the new mounts.
+    s += "cd -- \"$PWD\"\n";
+    // Not exec: this shell (pid 1 of the namespace) waits for the build, then
+    // its trap deletes the overlay layers.
+    s += &format!(
+        "setpriv --reuid={uid} --regid={gid} --clear-groups --no-new-privs -- env -i {} bash -c {}\n",
+        vars.iter()
+            .map(|(k, v)| sq(&format!("{k}={v}")))
+            .collect::<Vec<_>>()
+            .join(" "),
+        sq(cmd)
+    );
+    s
+}
+
+/// True if CI credentials or secrets: never handed to challenge commands.
+fn secret_var(k: &str) -> bool {
+    k.starts_with("ACTIONS_")
+        || k.contains("TOKEN")
+        || k.starts_with("GITHUB_")
+        || k.contains("SECRET")
+}
+
+pub(crate) fn run_mode(
+    mode: Mode,
+    env: &[(String, String)],
+    dir: &Path,
+    cmd: &str,
+    seed: u64,
+) -> Run {
     let start = Instant::now();
     let seed_env = ("CB_SEED".to_string(), seed.to_string());
-    let mut command = if sandbox {
+    if let Mode::Build(b) = &mode {
+        // Writable dirs and outputs must exist before they can be bind-mounted.
+        let home = std::env::var("HOME").unwrap_or_default();
+        let mut prep = Ok(());
+        for w in &b.writable {
+            let p = w
+                .strip_prefix("~/")
+                .map(|r| Path::new(&home).join(r))
+                .unwrap_or_else(|| w.into());
+            prep = prep.and(std::fs::create_dir_all(&p));
+        }
+        for o in &b.outputs {
+            let p = dir.join(o);
+            if let Some(parent) = p.parent() {
+                prep = prep.and(std::fs::create_dir_all(parent));
+            }
+            if !p.exists() {
+                prep = prep.and(std::fs::File::create(&p).map(|_| ()));
+            }
+        }
+        if let Err(e) = prep {
+            return Run {
+                ok: false,
+                stdout: String::new(),
+                secs: 0.0,
+                detail: format!("build sandbox: {e}"),
+            };
+        }
+    }
+    let mut command = if let Mode::Build(b) = &mode {
+        let vars: Vec<(String, String)> = std::env::vars()
+            .filter(|(k, _)| !secret_var(k))
+            .chain(env.iter().cloned())
+            .chain(std::iter::once(seed_env.clone()))
+            .collect();
+        // SAFETY: getuid/getgid have no preconditions.
+        let (uid, gid) = unsafe { (libc::getuid(), libc::getgid()) };
+        let home = std::env::var("HOME").unwrap_or_default();
+        let mut c = Command::new("sudo");
+        c.args([
+            "-n",
+            "unshare",
+            "--mount",
+            "--net",
+            "--pid",
+            "--fork",
+            "--kill-child",
+            "--mount-proc",
+            "--",
+            "bash",
+            "-c",
+        ])
+        .arg(build_script(b, dir, &home, uid, gid, &vars, cmd));
+        c
+    } else if matches!(mode, Mode::Judge) {
         let mut c = Command::new("sudo");
         c.args([
             "unshare",
@@ -210,7 +376,7 @@ pub(crate) fn run_in(
     // Never hand CI credentials to challenge commands (the build compiles
     // submission bytes): ACTIONS_RUNTIME_TOKEN can upload artifacts.
     for (k, _) in std::env::vars() {
-        if k.starts_with("ACTIONS_") || k.contains("TOKEN") || k.starts_with("GITHUB_") {
+        if secret_var(&k) {
             command.env_remove(k);
         }
     }
@@ -336,6 +502,23 @@ pub fn tree_bytes(dir: &Path) -> u64 {
 /// Copies the challenge to a scratch dir whose editable surface is the
 /// baseline with each of `overlays` copied on top, in order. Broken variants
 /// ship only the files they change.
+/// The required broken variants, then any other directory under
+/// `preflight/broken/` (sorted): a challenge-specific cheat its verifier must catch.
+fn broken_variants(dir: &Path) -> Vec<String> {
+    let mut names: Vec<String> = BROKEN.iter().map(|n| n.to_string()).collect();
+    let mut extra: Vec<String> = std::fs::read_dir(dir.join("preflight/broken"))
+        .into_iter()
+        .flatten()
+        .flatten()
+        .filter(|e| e.path().is_dir())
+        .filter_map(|e| e.file_name().into_string().ok())
+        .filter(|n| !names.contains(n))
+        .collect();
+    extra.sort();
+    names.extend(extra);
+    names
+}
+
 fn workspace(
     dir: &Path,
     editable: &str,
@@ -463,6 +646,35 @@ pub fn run_all(dir: &Path) -> Result<Report, String> {
             Err(e) => r.push("rust policy", Status::Fail, e.join("; ")),
         }
     }
+    // Haskell: the baseline passes its own policy, and so does every broken
+    // variant (else the gate would refuse it before the verifier sees it).
+    if let Some(hs) = &spec.haskell {
+        let base = dir.join("baseline");
+        let mut errs: Vec<String> = crate::haskellpolicy::check(&base, &base, &hs.src)
+            .err()
+            .unwrap_or_default();
+        for name in broken_variants(dir) {
+            let ws = workspace(
+                dir,
+                editable,
+                &[dir.join("preflight/broken").join(&name)],
+                &format!("hs-{name}"),
+            )?;
+            if let Err(e) = crate::haskellpolicy::check(&base, &ws.join(editable), &hs.src) {
+                errs.extend(e.into_iter().map(|e| format!("broken/{name}: {e}")));
+            }
+            let _ = std::fs::remove_dir_all(&ws);
+        }
+        if errs.is_empty() {
+            r.push(
+                "haskell policy",
+                Status::Pass,
+                "baseline and broken variants clean",
+            );
+        } else {
+            r.push("haskell policy", Status::Fail, errs.join("; "));
+        }
+    }
     let size = tree_bytes(&dir.join("baseline"));
     if size > spec.paths.max_bytes {
         r.push(
@@ -482,11 +694,71 @@ pub fn run_all(dir: &Path) -> Result<Report, String> {
         r.push("setup", Status::Fail, setup.detail);
         return Ok(r);
     }
-    let build = spec
-        .commands
-        .build
+    // The build sandbox CI uses (#51): prove it holds, then build in it.
+    let sandbox = spec
+        .build_sandbox
         .as_ref()
-        .map(|b| run(&env, &base, b, seed));
+        .filter(|_| build_sandbox_available());
+    if let Some(bs) = sandbox {
+        let out = bs.outputs.first().map(String::as_str).unwrap_or("");
+        // A file the probe writes into the first writable (overlay) dir: it
+        // must be visible inside and gone afterwards.
+        let home = std::env::var("HOME").unwrap_or_default();
+        let persist = bs.writable.first().map(|w| {
+            let d = w
+                .strip_prefix("~/")
+                .map(|r| Path::new(&home).join(r))
+                .unwrap_or_else(|| w.into());
+            d.join(".cb-overlay-probe")
+        });
+        let p_str = persist
+            .as_ref()
+            .map(|p| p.display().to_string())
+            .unwrap_or_default();
+        let probe = format!(
+            "fail() {{ echo \"probe: $1\" >&2; exit 1; }}; \
+             touch \"$HOME/.cb-probe\" 2>/dev/null && fail 'home writable'; \
+             touch cb-probe 2>/dev/null && fail 'workspace writable'; \
+             sudo -n true 2>/dev/null && fail 'sudo works'; \
+             (exec 3<>/dev/tcp/1.1.1.1/443) 2>/dev/null && fail 'network reachable'; \
+             [ -z {o} ] || : > {o} || fail 'output not writable'; \
+             [ -z {w} ] || {{ : > {w} && [ -e {w} ]; }} || fail 'cache dir not writable inside'; \
+             exit 0",
+            o = sq(out),
+            w = sq(&p_str)
+        );
+        let p = run_mode(Mode::Build(bs), &env, &base, &probe, seed);
+        let leaked = persist.as_ref().is_some_and(|p| p.exists());
+        if p.ok && !leaked {
+            r.push(
+                "build sandbox",
+                Status::Pass,
+                "home and workspace read-only, no sudo, no network; outputs writable; cache writes discarded",
+            );
+        } else if leaked {
+            r.push(
+                "build sandbox",
+                Status::Fail,
+                format!("a write to {p_str} outlived the build"),
+            );
+        } else {
+            r.push(
+                "build sandbox",
+                Status::Fail,
+                format!("probe escaped or failed: {}", p.detail),
+            );
+        }
+    } else if spec.build_sandbox.is_some() {
+        r.push(
+            "build sandbox",
+            Status::Warn,
+            "not on Linux with passwordless sudo: built unsandboxed here",
+        );
+    }
+    let build = spec.commands.build.as_ref().map(|b| match sandbox {
+        Some(bs) => run_mode(Mode::Build(bs), &env, &base, b, seed),
+        None => run(&env, &base, b, seed),
+    });
     if let Some(b) = build.as_ref().filter(|b| !b.ok) {
         r.push("baseline builds", Status::Fail, b.detail.clone());
         return Ok(r);
@@ -575,7 +847,7 @@ pub fn run_all(dir: &Path) -> Result<Report, String> {
     }
 
     // Deliberately broken candidates must build and then fail verify.
-    for name in BROKEN {
+    for name in &broken_variants(dir) {
         let src = dir.join("preflight/broken").join(name);
         if !src.is_dir() {
             r.push(
@@ -587,23 +859,30 @@ pub fn run_all(dir: &Path) -> Result<Report, String> {
         }
         let ws = workspace(dir, editable, std::slice::from_ref(&src), name)?;
         // Same setup as the baseline, so a variant fails for its own reason.
-        let setup_ok = run(&env, &ws, &spec.commands.setup, seed).ok;
+        let setup = run(&env, &ws, &spec.commands.setup, seed);
         let b = spec
             .commands
             .build
             .as_ref()
             .map(|b| run(&env, &ws, b, seed));
         let v = run(&env, &ws, &spec.commands.verify, seed);
-        let (status, detail) = match (setup_ok && b.as_ref().is_none_or(|b| b.ok), verify_ok(&v)) {
-            (false, _) => (
+        let failed = if !setup.ok {
+            Some(format!("setup: {}", setup.detail))
+        } else {
+            b.as_ref()
+                .filter(|b| !b.ok)
+                .map(|b| format!("build: {}", b.detail))
+        };
+        let (status, detail) = match (failed, verify_ok(&v)) {
+            (Some(why), _) => (
                 Status::Fail,
-                "setup or build failed, so it doesn't test the verifier".to_string(),
+                format!("{why}; so it doesn't test the verifier"),
             ),
-            (true, true) => (
+            (None, true) => (
                 Status::Fail,
                 "verifier ACCEPTED a broken candidate".to_string(),
             ),
-            (true, false) => (Status::Pass, "rejected".to_string()),
+            (None, false) => (Status::Pass, "rejected".to_string()),
         };
         r.push(&format!("broken: {name}"), status, detail);
         let _ = std::fs::remove_dir_all(&ws);
@@ -726,8 +1005,13 @@ mod tests {
 
     /// A toy challenge: the answer file must hold 42; score reports a metric.
     fn toy(family: &str, verifier_accepts_anything: bool) -> PathBuf {
+        toy_in("", family, verifier_accepts_anything)
+    }
+
+    /// `tag` keeps tests that change their toy apart: tests run in parallel.
+    fn toy_in(tag: &str, family: &str, verifier_accepts_anything: bool) -> PathBuf {
         let root = std::env::temp_dir().join(format!(
-            "cb-pf-{}-{family}-{verifier_accepts_anything}",
+            "cb-pf-{}-{family}-{verifier_accepts_anything}{tag}",
             std::process::id()
         ));
         let _ = std::fs::remove_dir_all(&root);
@@ -795,6 +1079,20 @@ mod tests {
     }
 
     #[test]
+    fn extra_broken_variants_are_run() {
+        let dir = toy_in("-extra", "resource", false);
+        std::fs::create_dir_all(dir.join("preflight/broken/lazy")).unwrap();
+        std::fs::write(dir.join("preflight/broken/lazy/answer"), "40\n").unwrap();
+        let r = run_all(&dir).unwrap();
+        assert_eq!(status(&r, "broken: lazy"), Status::Pass);
+        // One the verifier accepts blocks the challenge, like a required one.
+        std::fs::write(dir.join("preflight/broken/lazy/answer"), "42\n").unwrap();
+        let r = run_all(&dir).unwrap();
+        assert_eq!(status(&r, "broken: lazy"), Status::Fail);
+        assert!(r.blocked());
+    }
+
+    #[test]
     fn scaffold_fails_closed() {
         let root = std::env::temp_dir().join(format!("cb-pf-{}-raw", std::process::id()));
         let _ = std::fs::remove_dir_all(&root);
@@ -839,6 +1137,43 @@ mod tests {
             );
             eprintln!("valgrind not found: skipped score checks\n{text}");
         }
+    }
+
+    #[test]
+    fn build_script_quotes_and_orders_mounts() {
+        let b = crate::challenge::BuildSandbox {
+            writable: vec!["~/.cabal".into(), "/abs/it's".into()],
+            outputs: vec![".bin/candidate".into()],
+        };
+        let vars = vec![("PATH".to_string(), "/a b:/c".to_string())];
+        let s = build_script(
+            &b,
+            Path::new("/tmp/ws"),
+            "/home/r",
+            1001,
+            118,
+            &vars,
+            "./build.sh 'x'",
+        );
+        let ro = s.find("ro '/home/r'").unwrap();
+        let rw = s.find("ovl '/home/r/.cabal'").unwrap();
+        assert!(
+            !s.contains("exec setpriv"),
+            "the shell must outlive the build to clean up"
+        );
+        assert!(ro < rw, "writable holes go after the read-only mounts");
+        assert!(s.contains("ro '/tmp/ws'"));
+        assert!(s.contains("rw '/tmp/ws/.bin/candidate'"));
+        assert!(s.contains(r#"ovl '/abs/it'\''s'"#));
+        assert!(s.contains("--reuid=1001 --regid=118 --clear-groups --no-new-privs"));
+        assert!(s.contains("'PATH=/a b:/c'"));
+        assert!(s.ends_with("bash -c './build.sh '\\''x'\\'''\n"), "{s}");
+        // The script itself must parse.
+        let ok = Command::new("bash")
+            .args(["-n", "-c", &s])
+            .status()
+            .unwrap();
+        assert!(ok.success());
     }
 
     #[test]

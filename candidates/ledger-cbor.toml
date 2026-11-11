@@ -5,11 +5,11 @@
 slug = "ledger-cbor"
 title = "Cardano ledger: faster Conway CBOR decoding (cardano-ledger, Haskell)"
 family = "perf"
-direction = "minimise"
+direction = "minimise"  # the raw metric (Ir); challenge.toml maximises speedup = ref/cand
 category = "haskell"
 url = "https://github.com/IntersectMBO/cardano-ledger"
 # challenges/ledger-cbor: token policy in build.sh (no FFI, new unsafe*, runRW#, TH, CPP, IO).
-editable = ["libs/cardano-ledger-binary/src/"]  # v1: binary package only; Conway instances frozen
+editable = ["libs/cardano-ledger-binary/src/", "libs/cardano-ledger-core/src/", "eras/{shelley,allegra,mary,alonzo,babbage,conway}/impl/src/"]  # src/ only; cabal files and tests frozen
 
 [gates.verifiable]
 pass = true
@@ -32,8 +32,8 @@ value = 4
 evidence = "Haskell performance work (GHC Core, cborg, allocation tuning) is a scarce skill; agents are weaker in Haskell than Rust (estimate)"
 
 [scores.headroom]
-value = 3
-evidence = "no published decode benchmarks (searched 2026-11-06). Measured 97k Ir and ~54 KB allocated per tx (avg 668 bytes), about 80 bytes allocated per input byte, which hints at slack. No bound yet: run pallas (Rust) on the same pool"
+value = 4
+evidence = "measure run 42721883592 (6 pools): reference ~100-110k Ir/tx vs pallas (Rust) ~22-25k, 4.3-4.7x (3.3-3.5x with hashing); native wall 1.8 s vs 0.22 s. Editable packages (binary + core + shelley..conway src) run ~25% of Ir directly and the RTS 38% (PAP apply, update frames, GC), most of it shaped by the decoders. With binary alone editable the direct share was 6.2% (~1.07x cap), hence the wider scope"
 
 [scores.eval_cost]
 value = 3

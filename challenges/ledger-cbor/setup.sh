@@ -38,16 +38,22 @@ fi
 # Judge-owned sources. rsync -c leaves unchanged files alone, so GHC's
 # source-hash recompilation check keeps warm builds warm.
 rsync -a -c --delete harness/ "$L/ledger-cbor-harness/"
-# Planning stand-in until build.sh syncs candidate/ in. No warm candidate build:
-# it would always cost one extra full build (build.sh rebuilds what changed).
-[ -d "$L/cand-binary" ] || rsync -a baseline/ "$L/cand-binary/"
-
 # Two projects over the same clone. Both drop upstream's dev-only +asserts flags
-# (the node's release build has none); the candidate one swaps in cand-binary.
-# Additions go in <project>.local, which cabal merges (as the spike does).
+# (the node's release build has none). The candidate one swaps each editable
+# package (packages.txt) for a copy at cand/<name>: upstream's cabal file,
+# testlib and tests, with build.sh syncing candidate/<name>/src over its src/.
+# Until then src/ is upstream's (= baseline). No warm candidate build: it would
+# always cost one extra full build (build.sh rebuilds what changed).
 sed '/flags: +asserts/d' "$L/cabal.project" > "$L/cabal.project.ref"
-sed 's#^  libs/cardano-ledger-binary$#  cand-binary#' "$L/cabal.project.ref" > "$L/cabal.project.cand"
-grep -q '^  cand-binary$' "$L/cabal.project.cand"
+cp "$L/cabal.project.ref" "$L/cabal.project.cand"
+mkdir -p "$L/cand"
+grep -v '^#' packages.txt | while read -r name path; do
+  [ -n "$name" ] || continue
+  [ -d "$L/cand/$name" ] || rsync -a "$L/$path/" "$L/cand/$name/"
+  sed -i "s#^  $path\$#  cand/$name#" "$L/cabal.project.cand"
+  grep -q "^  cand/$name\$" "$L/cabal.project.cand" || { echo "$path not in cabal.project"; exit 1; }
+done
+# Additions go in <project>.local, which cabal merges (as the spike does).
 for p in ref cand; do
   printf 'packages: ledger-cbor-harness\n\npackage cardano-crypto-praos\n  flags: -external-libsodium-vrf\n' \
     > "$L/cabal.project.$p.local"
@@ -67,5 +73,16 @@ mkdir -p .bin
     echo "cabal update failed; using the cached index (index-state is pinned)"
   fi
   cabal build -v1 --project-file=cabal.project.ref --builddir=dist-ref ledger-cbor-harness
+  # The candidate build runs offline in CI (build sandbox): clone its
+  # source-repository-packages into dist-cand and download its deps now. cabal
+  # records the sync, so the offline build doesn't fetch again. No compiling.
+  cabal build -v1 --project-file=cabal.project.cand --builddir=dist-cand --only-download ledger-cbor-harness
+  # Upstream test suites (#53, build.sh): download their dependencies now, while
+  # there is network. Download only: setup never compiles candidate code.
+  if [ "${CB_UPSTREAM_TESTS:-0}" = 1 ]; then
+    # shellcheck disable=SC2046
+    cabal build -v1 --project-file=cabal.project.cand --builddir=dist-cand-test --enable-tests --only-download \
+      $(grep -v '^#' "$OLDPWD/packages.txt" | awk 'NF { print $1 ":test:tests" }')
+  fi
 )
 cp "$(cd "$L" && cabal list-bin --project-file=cabal.project.ref --builddir=dist-ref ledger-cbor-harness)" .bin/reference

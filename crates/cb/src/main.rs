@@ -5,6 +5,7 @@ use std::process::ExitCode;
 mod candidate;
 mod challenge;
 mod feed;
+mod haskellpolicy;
 mod paths;
 mod pipeline;
 mod policy;
@@ -99,8 +100,20 @@ enum Command {
         /// Run verify/score as nobody with no network (Linux, sudo)
         #[arg(long)]
         sandbox: bool,
+        /// Also score the current record's editable tree on the same sample
+        /// and report candidate/record (promotion; needs git history)
+        #[arg(long)]
+        against_record: bool,
         #[arg(long, default_value = "score.json")]
         out: PathBuf,
+    },
+    /// Haskell source policy: check CANDIDATE against BASELINE (as `cb gate` does)
+    HsPolicy {
+        baseline: PathBuf,
+        candidate: PathBuf,
+        /// Source dirs (module roots), relative to both trees
+        #[arg(long = "src", default_value = "src")]
+        src: Vec<String>,
     },
     /// Decide an attempt's status and append it to results.jsonl (trusted)
     Record {
@@ -219,6 +232,7 @@ fn main() -> ExitCode {
             baseline,
             submission,
             sandbox,
+            against_record,
             out,
         } => {
             let source = match (&submission, baseline) {
@@ -226,12 +240,32 @@ fn main() -> ExitCode {
                 (None, true) => pipeline::Source::Baseline,
                 (None, false) => pipeline::Source::AsIs,
             };
-            pipeline::score(&root, &slug, source, sandbox).and_then(|v| {
+            let rec = if against_record {
+                pipeline::record_tree(&root, &slug)
+            } else {
+                Ok(None)
+            };
+            rec.and_then(|rec| {
+                let against = rec.as_ref().map(|(c, t)| (c.as_str(), t.as_path()));
+                pipeline::score(&root, &slug, source, sandbox, against)
+            })
+            .and_then(|v| {
                 let text = serde_json::to_string_pretty(&v).unwrap();
                 println!("{text}");
                 std::fs::write(&out, text + "\n").map_err(|e| e.to_string())
             })
         }
+        Command::HsPolicy {
+            baseline,
+            candidate,
+            src,
+        } => match haskellpolicy::check(&baseline, &candidate, &src) {
+            Ok(()) => {
+                println!("haskell policy: clean");
+                Ok(())
+            }
+            Err(e) => Err(format!("haskell policy:\n  {}", e.join("\n  "))),
+        },
         Command::Record {
             slug,
             root,

@@ -1,5 +1,8 @@
-candidate/ and baseline/ are copies of libs/cardano-ledger-binary from
-cardano-ledger at commit 7827506b7518284d7f9dbbe3502a20431e513fe9,
+candidate/<package>/src and baseline/<package>/src are copies of the src/
+directories of the packages listed in packages.txt (cardano-ledger-binary,
+cardano-ledger-core and the shelley, allegra, mary, alonzo, babbage and conway
+era implementations) from cardano-ledger at commit
+7827506b7518284d7f9dbbe3502a20431e513fe9,
 https://github.com/IntersectMBO/cardano-ledger
 
 Copyright 2018-2023 Input Output Global Inc (IOG).
@@ -8,6 +11,9 @@ you may not use these files except in compliance with the License.
 You may obtain a copy of the License at
 
     http://www.apache.org/licenses/LICENSE-2.0
+
+The full text is in LICENSE (copied from the root of cardano-ledger at the
+same commit).
 
 corpus/pool.hex.gz holds public Cardano mainnet transactions fetched from
 api.koios.rest on 2026-11-06.

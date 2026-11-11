@@ -1,0 +1,96 @@
+# Prebuilt reference + warm baseline build for Haskell challenges (#54).
+# A cold cardano-ledger build is 30-52 min, close to cb's per-command limit,
+# and the cabal store cache was only ever saved by manual Preflight runs. This
+# trusted job (main only, judge code and the committed baseline only) builds
+# both and saves them; submission/promote/preflight jobs only restore
+# (.github/actions/haskell). With dist-cand warm from the baseline, a
+# submission's build recompiles only what it changed. Runs every 5 days so
+# GitHub's 7-day cache eviction never leaves PRs cold.
+name: Warm
+
+on:
+  workflow_dispatch:
+    inputs:
+      slug:
+        description: challenges/<slug> (empty = every Haskell challenge)
+        required: false
+  schedule:
+    - cron: "17 3 */5 * *"
+  push:
+    branches: [main]
+    paths:
+      - "challenges/*/setup.sh"
+      - "challenges/*/build.sh"
+      - "challenges/*/packages.txt"
+      - "challenges/*/harness/**"
+      - "challenges/*/baseline/**"
+      - ".github/actions/haskell/**"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: warm
+  cancel-in-progress: false
+
+jobs:
+  list:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      slugs: ${{ steps.l.outputs.slugs }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - id: l
+        run: |
+          if [ -n "$SLUG_IN" ]; then s="[\"$SLUG_IN\"]"; else
+            s=$(for f in challenges/*/harness/*.cabal; do [ -e "$f" ] && basename "$(dirname "$(dirname "$f")")"; done \
+              | sort -u | jq -R . | jq -sc .)
+          fi
+          echo "slugs=$s" | tee -a "$GITHUB_OUTPUT"
+        env:
+          SLUG_IN: ${{ inputs.slug }}
+
+  warm:
+    needs: list
+    if: needs.list.outputs.slugs != '[]'
+    strategy:
+      fail-fast: false
+      matrix:
+        slug: ${{ fromJSON(needs.list.outputs.slugs) }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 180
+    env:
+      SLUG: ${{ matrix.slug }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - id: hs
+        uses: ./.github/actions/haskell
+        with:
+          slug: ${{ matrix.slug }}
+      - name: Build the reference and the baseline (skipped if both caches hit)
+        if: steps.hs.outputs.ledger-hit != 'true' || steps.hs.outputs.cache-hit != 'true'
+        run: |
+          cd "challenges/$SLUG"
+          start=$(date +%s)
+          ./setup.sh
+          echo "setup: $(( ($(date +%s) - start) / 60 )) min"
+          ./build.sh
+          echo "setup + baseline build: $(( ($(date +%s) - start) / 60 )) min"
+          du -sh ~/.cache/cb-"$SLUG" "${{ steps.hs.outputs.cabal-store }}"
+      - name: Save the cabal store
+        if: steps.hs.outputs.cache-hit != 'true'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ steps.hs.outputs.cabal-store }}
+          key: ${{ steps.hs.outputs.cache-key }}
+      - name: Save the prebuilt reference and warm baseline build
+        if: steps.hs.outputs.ledger-hit != 'true'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.cache/cb-${{ matrix.slug }}
+          key: ${{ steps.hs.outputs.ledger-key }}

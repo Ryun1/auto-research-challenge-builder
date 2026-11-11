@@ -5,6 +5,7 @@ build-type: Simple
 
 executable ledger-cbor-harness
   main-is: Main.hs
+  other-modules: HeapWalk
   default-language: Haskell2010
   -- no full laziness: keep repeated decodes inside the loop.
   -- -V0: no RTS timer ticks, so Callgrind counts don't depend on wall time.
@@ -18,3 +19,4 @@ executable ledger-cbor-harness
     cardano-ledger-conway,
     cardano-ledger-core,
     deepseq,
+    ghc-heap,

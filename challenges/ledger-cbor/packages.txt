@@ -1,0 +1,11 @@
+# Editable packages: <cabal name> <path in cardano-ledger @ 7827506>.
+# candidate/<name>/src replaces that package's src/; its cabal file, testlib and
+# tests stay upstream's. Keep in sync with [haskell] src in challenge.toml.
+cardano-ledger-binary  libs/cardano-ledger-binary
+cardano-ledger-core    libs/cardano-ledger-core
+cardano-ledger-shelley eras/shelley/impl
+cardano-ledger-allegra eras/allegra/impl
+cardano-ledger-mary    eras/mary/impl
+cardano-ledger-alonzo  eras/alonzo/impl
+cardano-ledger-babbage eras/babbage/impl
+cardano-ledger-conway  eras/conway/impl

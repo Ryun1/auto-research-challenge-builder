@@ -53,11 +53,23 @@ def mutate(rng, tx):
     return kind, bytes([rng.choice([0x80, 0xA0, 0xD8])]) + tx
 
 
-def digest(exe, path):
-    out = subprocess.run([str(exe), "digest", path], capture_output=True, text=True, timeout=900)
+def lines(exe, mode, path):
+    """One output line per input from `harness digest|nf`."""
+    out = subprocess.run([str(exe), mode, path], capture_output=True, text=True, timeout=900)
     if out.returncode != 0:
-        raise RuntimeError(f"{exe.name} digest exit {out.returncode}: {out.stderr[-300:]}")
+        raise RuntimeError(f"{exe.name} {mode} exit {out.returncode}: {out.stderr[-300:]}")
     return out.stdout.splitlines()
+
+
+def score_sample(seed, p):
+    """The txs score() times for this seed. verify() checks these same txs."""
+    return random.Random(seed ^ 0x5C0E).sample(p, SCORE_N)
+
+
+def nf(line):
+    """(unevaluated, functions) from an `nf` line, or None for anything else."""
+    m = re.fullmatch(r"nf (\d+) (\d+)", line)
+    return (int(m.group(1)), int(m.group(2))) if m else None
 
 
 def verify(seed):
@@ -66,9 +78,12 @@ def verify(seed):
     cases += [mutate(rng, t) for t in rng.sample(p, MUTANT_N)]
     by_len = sorted(p, key=len)
     cases += [("edge", b""), ("edge", b"\x00"), ("edge", by_len[0]), ("edge", by_len[-1])]
+    # The txs score() will time with this seed: their digests are checked too, so
+    # the timed inputs are known to decode to the reference's values.
+    cases += [("scored", t) for t in score_sample(seed, p)]
     path = write([t for _, t in cases])
-    ref, cand = digest(REF, path), digest(CAND, path)
-    if any(not r.startswith("ok ") for (k, _), r in zip(cases, ref) if k == "valid"):
+    ref, cand = lines(REF, "digest", path), lines(CAND, "digest", path)
+    if any(not r.startswith("ok ") for (k, _), r in zip(cases, ref) if k in ("valid", "scored")):
         return {"ok": False, "detail": "infra: reference rejected a mainnet tx"}
     if len(cand) != len(cases):
         return {"ok": False, "detail": f"candidate printed {len(cand)} lines for {len(cases)} inputs"}
@@ -77,7 +92,26 @@ def verify(seed):
     detail = f"{pool_label()}: {len(cases)} inputs ({rejected} rejected by reference): {len(bad)} differ"
     if bad:
         detail += "; first: " + ", ".join(f"#{i} {k} ref={r[:12]} cand={c[:12]}" for i, k, r, c in bad[:3])
-    return {"ok": not bad, "detail": detail}
+
+    # The timed pass forces a decoded tx with rnf, and the candidate owns some
+    # NFData instances (Sized), so digests alone don't show that the timed pass
+    # decoded everything. On every input the reference accepts, the harness
+    # repeats the timed pass's decode + rnf and walks the heap: nothing may be
+    # left unevaluated, and no more function closures than the reference has.
+    full = [i for i, r in enumerate(ref) if r.startswith("ok ")]
+    nf_path = write([cases[i][1] for i in full])
+    ref_nf, cand_nf = lines(REF, "nf", nf_path), lines(CAND, "nf", nf_path)
+    if len(ref_nf) != len(full) or any(nf(r) is None or nf(r)[0] for r in ref_nf):
+        odd = next((r for r in ref_nf if nf(r) is None or nf(r)[0]), f"{len(ref_nf)} lines")
+        return {"ok": False, "detail": f"infra: reference not fully evaluated after rnf ({odd!r})"}
+    if len(cand_nf) != len(full):
+        return {"ok": False, "detail": f"candidate printed {len(cand_nf)} nf lines for {len(full)} inputs"}
+    lazy = [(i, r, c) for i, r, c in zip(full, ref_nf, cand_nf)
+            if nf(c) is None or nf(c)[0] or nf(c)[1] > nf(r)[1]]
+    detail += f"; {len(lazy)} of {len(full)} not fully evaluated by the timed pass's rnf"
+    if lazy:
+        detail += "; first: " + ", ".join(f"#{i} {cases[i][0]} ref={r!r} cand={c[:20]!r}" for i, r, c in lazy[:3])
+    return {"ok": not bad and not lazy, "detail": detail}
 
 
 def instructions(exe, path, reps):
@@ -94,7 +128,7 @@ def rel_mad(xs):
 
 
 def score(seed):
-    sample = write(random.Random(seed ^ 0x5C0E).sample(pool(), SCORE_N))
+    sample = write(score_sample(seed, pool()))
     # Instructions for decoding the sample once; start-up and reading the hex
     # input (the 0-pass run) subtracted.
     ic = instructions(CAND, sample, 1) - instructions(CAND, sample, 0)

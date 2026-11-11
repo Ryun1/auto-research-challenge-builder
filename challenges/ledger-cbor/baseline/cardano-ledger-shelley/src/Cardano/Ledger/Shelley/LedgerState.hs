@@ -1,0 +1,130 @@
+{-# LANGUAGE AllowAmbiguousTypes #-}
+{-# LANGUAGE DataKinds #-}
+{-# LANGUAGE ScopedTypeVariables #-}
+
+-- |
+-- Module      : LedgerState
+-- Description : Operational Rules
+--
+-- This module implements the operation rules for treating UTxO transactions ('Tx')
+-- as state transformations on a ledger state ('LedgerState'),
+-- as specified in /A Simplified Formal Specification of a UTxO Ledger/.
+module Cardano.Ledger.Shelley.LedgerState (
+  -- * UTxO
+  UTxO (..),
+  CanGetUTxO (..),
+  CanSetUTxO (..),
+
+  -- * Others to organize
+  AccountState,
+  ChainAccountState,
+  EraCertState (..),
+  DState (..),
+  EpochState (..),
+  PulsingRewUpdate (..),
+  FutureGenDeleg (..),
+  InstantaneousRewards (..),
+  LedgerState (..),
+  LedgerStateWithLimits (..),
+  PState (..),
+  RewardUpdate (..),
+  RewardSnapShot (..),
+  UTxOState (..),
+  smartUTxOState,
+  mkShelleyCertState,
+  ShelleyCertState (..),
+
+  -- * Genesis State
+  genesisState,
+
+  -- * DelegationState
+  totalObligation,
+  allObligations,
+
+  -- * Epoch boundary
+  applyRUpd,
+  applyRUpdFiltered,
+  filterAllRewards,
+  FilteredRewards (..),
+  createRUpd,
+  completeRupd,
+  startStep,
+  pulseStep,
+  completeStep,
+  NewEpochState (NewEpochState, nesEL, nesEs, nesRu, nesBprev, nesBcur, nesLastTickSlotNo),
+  StashedAVVMAddresses,
+  stashedAVVMAddresses,
+  getGKeys,
+  updateNES,
+  circulation,
+
+  -- * Decay
+  decayFactor,
+
+  -- * Remove Bootstrap Redeem Addresses
+  returnRedeemAddrsToReserves,
+  updateNonMyopic,
+  emptyRewardUpdate,
+  pvCanFollow,
+  availableAfterMIR,
+  ShelleyGovState (..),
+
+  -- * Lenses from Types
+  nesEsL,
+  nesELL,
+  nesBprevL,
+  nesBcurL,
+  nesRuL,
+  nesStashedAVVMAddressesL,
+  nesLastTickSlotNoL,
+  nesEpochStateL,
+  esSnapshotsL,
+  esLStateL,
+  esNonMyopicL,
+  curPParamsEpochStateL,
+  prevPParamsEpochStateL,
+  futurePParamsEpochStateL,
+  lsUTxOStateL,
+  lsCertStateL,
+  lsLastEbAnnouncementL,
+  lswlLedgerStateL,
+  lswlBlockBodyLimitsL,
+  utxosDepositedL,
+  utxosFeesL,
+  utxosGovStateL,
+  utxosDonationL,
+  epochStateGovStateL,
+  epochStateStakeDistrL,
+  epochStateStakePoolsL,
+  epochStateDonationL,
+  newEpochStateGovStateL,
+  nesStakePoolDistrG,
+
+  -- * Lenses from CertState
+  dsGenDelegsL,
+  dsIRewardsL,
+  dsFutureGenDelegsL,
+  psStakePoolsL,
+  psFutureStakePoolParamsL,
+  psRetiringL,
+  psVRFKeyHashesL,
+
+  -- * Lenses from SnapShot(s)
+  ssStakeMarkL,
+  ssStakeSetL,
+  ssStakeGoL,
+  ssFeeL,
+  ssStakeL,
+  msSnapShotL,
+  ssSnapShotL,
+  gsSnapShotL,
+) where
+
+import Cardano.Ledger.Shelley.LedgerState.IncrementalStake
+import Cardano.Ledger.Shelley.LedgerState.NewEpochState
+import Cardano.Ledger.Shelley.LedgerState.PulsingReward
+import Cardano.Ledger.Shelley.LedgerState.Types
+import Cardano.Ledger.Shelley.PParams (pvCanFollow)
+import Cardano.Ledger.Shelley.RewardUpdate
+import Cardano.Ledger.Shelley.Rules.Ppup (ShelleyGovState (..))
+import Cardano.Ledger.Shelley.State

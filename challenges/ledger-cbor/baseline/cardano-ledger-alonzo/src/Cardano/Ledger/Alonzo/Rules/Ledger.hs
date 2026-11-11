@@ -1,0 +1,229 @@
+{-# LANGUAGE DataKinds #-}
+{-# LANGUAGE DerivingStrategies #-}
+{-# LANGUAGE FlexibleContexts #-}
+{-# LANGUAGE FlexibleInstances #-}
+{-# LANGUAGE MultiParamTypeClasses #-}
+{-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE TypeApplications #-}
+{-# LANGUAGE TypeFamilies #-}
+{-# LANGUAGE TypeOperators #-}
+{-# LANGUAGE UndecidableInstances #-}
+{-# OPTIONS_GHC -Wno-orphans #-}
+
+module Cardano.Ledger.Alonzo.Rules.Ledger (
+  LEDGER,
+  ledgerTransition,
+) where
+
+import qualified Cardano.Ledger.Allegra.Rules as Allegra
+import Cardano.Ledger.Alonzo.BlockBody (AlonzoBlockBodyLimits (..))
+import Cardano.Ledger.Alonzo.Era (AlonzoEra, LEDGER)
+import Cardano.Ledger.Alonzo.Rules.Delegs ()
+import Cardano.Ledger.Alonzo.Rules.Utxo (AlonzoUtxoPredFailure)
+import Cardano.Ledger.Alonzo.Rules.Utxos (AlonzoUtxosPredFailure)
+import Cardano.Ledger.Alonzo.Rules.Utxow (AlonzoUtxowEvent, AlonzoUtxowPredFailure, UTXOW)
+import Cardano.Ledger.Alonzo.Tx (AlonzoEraTx (..), IsPhase2Valid (..))
+import Cardano.Ledger.Alonzo.UTxO (AlonzoEraUTxO (..))
+import Cardano.Ledger.BaseTypes (ShelleyBase)
+import Cardano.Ledger.Shelley.Core
+import Cardano.Ledger.Shelley.LedgerState (
+  CertState,
+  LedgerState (..),
+  LedgerStateWithLimits (..),
+  UTxOState (..),
+ )
+import qualified Cardano.Ledger.Shelley.Rules as Shelley
+import Cardano.Ledger.Slot (epochFromSlot)
+import Cardano.Ledger.State (EraCertState, accountsL, certDStateL, drainAccounts)
+import Control.State.Transition (
+  Embed (..),
+  STS (..),
+  TRC (..),
+  TransitionRule,
+  judgmentContext,
+  liftSTS,
+  trans,
+ )
+import Data.Kind (Type)
+import Data.Sequence (Seq)
+import qualified Data.Sequence.Strict as StrictSeq
+import Lens.Micro
+
+type instance EraRuleFailure "LEDGER" AlonzoEra = Shelley.ShelleyLedgerPredFailure AlonzoEra
+
+instance InjectRuleFailure "LEDGER" Shelley.ShelleyLedgerPredFailure AlonzoEra
+
+instance InjectRuleFailure "LEDGER" Shelley.AccountAlreadyRegistered AlonzoEra where
+  injectFailure = Shelley.DelegsFailure . Shelley.DelplFailure . Shelley.DelegFailure . injectFailure
+
+instance InjectRuleFailure "LEDGER" AlonzoUtxowPredFailure AlonzoEra where
+  injectFailure = Shelley.UtxowFailure
+
+instance InjectRuleFailure "LEDGER" Shelley.ShelleyUtxowPredFailure AlonzoEra where
+  injectFailure = Shelley.UtxowFailure . injectFailure
+
+instance InjectRuleFailure "LEDGER" AlonzoUtxoPredFailure AlonzoEra where
+  injectFailure = Shelley.UtxowFailure . injectFailure
+
+instance InjectRuleFailure "LEDGER" AlonzoUtxosPredFailure AlonzoEra where
+  injectFailure = Shelley.UtxowFailure . injectFailure
+
+instance InjectRuleFailure "LEDGER" Shelley.ShelleyPpupPredFailure AlonzoEra where
+  injectFailure = Shelley.UtxowFailure . injectFailure
+
+instance InjectRuleFailure "LEDGER" Shelley.ShelleyUtxoPredFailure AlonzoEra where
+  injectFailure = Shelley.UtxowFailure . injectFailure
+
+instance InjectRuleFailure "LEDGER" Allegra.AllegraUtxoPredFailure AlonzoEra where
+  injectFailure = Shelley.UtxowFailure . injectFailure
+
+instance InjectRuleFailure "LEDGER" Shelley.ShelleyDelegsPredFailure AlonzoEra where
+  injectFailure = Shelley.DelegsFailure
+
+instance InjectRuleFailure "LEDGER" Shelley.ShelleyDelplPredFailure AlonzoEra where
+  injectFailure = Shelley.DelegsFailure . injectFailure
+
+instance InjectRuleFailure "LEDGER" Shelley.ShelleyPoolPredFailure AlonzoEra where
+  injectFailure = Shelley.DelegsFailure . injectFailure
+
+instance InjectRuleFailure "LEDGER" Shelley.ShelleyDelegPredFailure AlonzoEra where
+  injectFailure = Shelley.DelegsFailure . injectFailure
+
+-- =======================================
+
+-- | An abstract Alonzo Era, Ledger transition. Fix 'someLedger' at a concrete type to
+--   make it concrete.
+ledgerTransition ::
+  forall (someLEDGER :: Type -> Type) era.
+  ( STS (someLEDGER era)
+  , BaseM (someLEDGER era) ~ ShelleyBase
+  , Signal (someLEDGER era) ~ StAnnTx TopTx era
+  , State (someLEDGER era) ~ LedgerStateWithLimits era
+  , Environment (someLEDGER era) ~ Shelley.LedgerEnv era
+  , Embed (EraRule "UTXOW" era) (someLEDGER era)
+  , Embed (EraRule "DELEGS" era) (someLEDGER era)
+  , Environment (EraRule "DELEGS" era) ~ Shelley.DelegsEnv era
+  , State (EraRule "DELEGS" era) ~ CertState era
+  , Signal (EraRule "DELEGS" era) ~ Seq (TxCert era)
+  , Environment (EraRule "UTXOW" era) ~ Shelley.UtxoEnv era
+  , State (EraRule "UTXOW" era) ~ UTxOState era
+  , Signal (EraRule "UTXOW" era) ~ StAnnTx TopTx era
+  , AlonzoEraTx era
+  , AlonzoEraUTxO era
+  , EraCertState era
+  , EraRule "LEDGER" era ~ someLEDGER era
+  , InjectRuleFailure "LEDGER" Shelley.ShelleyLedgerPredFailure era
+  , BlockBodyLimits era ~ AlonzoBlockBodyLimits era
+  , SafeToHash (TxWits era)
+  ) =>
+  TransitionRule (someLEDGER era)
+ledgerTransition = do
+  TRC
+    ( Shelley.LedgerEnv slot mbCurEpochNo txIx pp account
+      , LedgerStateWithLimits (LedgerState utxoSt certState lastEbAnnouncement) blockBodyLimits
+      , stAnnTx
+      ) <-
+    judgmentContext
+  let tx = stAnnTx ^. txStAnnTxG
+      txBody = tx ^. bodyTxL
+
+  curEpochNo <- maybe (liftSTS $ epochFromSlot slot) pure mbCurEpochNo
+
+  certState' <-
+    if tx ^. isPhase2ValidTxL == Phase2Valid
+      then do
+        let withdrawals = tx ^. bodyTxL . withdrawalsTxBodyL
+        Shelley.testIncompleteAndMissingWithdrawals (certState ^. certDStateL . accountsL) withdrawals
+        trans @(EraRule "DELEGS" era) $
+          TRC
+            ( Shelley.DelegsEnv slot curEpochNo txIx pp tx account
+            , certState & certDStateL . accountsL %~ drainAccounts withdrawals
+            , StrictSeq.fromStrict $ txBody ^. certsTxBodyL
+            )
+      else pure certState
+
+  utxoSt' <-
+    trans @(EraRule "UTXOW" era) $
+      TRC
+        ( Shelley.UtxoEnv @era slot pp certState
+        , utxoSt
+        , stAnnTx
+        )
+  pure $
+    LedgerStateWithLimits
+      (LedgerState utxoSt' certState' lastEbAnnouncement)
+      ( blockBodyLimits
+          <> AlonzoBlockBodyLimits
+            { abblTxsSize = sizeTxForFeeCalculation tx
+            , abblExUnits = exUnitsStAnnTx stAnnTx
+            }
+      )
+
+instance
+  ( AlonzoEraTx era
+  , AlonzoEraUTxO era
+  , EraGov era
+  , Embed (EraRule "DELEGS" era) (LEDGER era)
+  , Embed (EraRule "UTXOW" era) (LEDGER era)
+  , Environment (EraRule "UTXOW" era) ~ Shelley.UtxoEnv era
+  , State (EraRule "UTXOW" era) ~ UTxOState era
+  , Signal (EraRule "UTXOW" era) ~ StAnnTx TopTx era
+  , Environment (EraRule "DELEGS" era) ~ Shelley.DelegsEnv era
+  , State (EraRule "DELEGS" era) ~ CertState era
+  , Signal (EraRule "DELEGS" era) ~ Seq (TxCert era)
+  , AtMostEra "Babbage" era
+  , EraRule "LEDGER" era ~ LEDGER era
+  , EraRuleFailure "LEDGER" era ~ Shelley.ShelleyLedgerPredFailure era
+  , InjectRuleFailure "LEDGER" Shelley.ShelleyLedgerPredFailure era
+  , EraCertState era
+  , BlockBodyLimits era ~ AlonzoBlockBodyLimits era
+  , SafeToHash (TxWits era)
+  ) =>
+  STS (LEDGER era)
+  where
+  type State (LEDGER era) = LedgerStateWithLimits era
+  type Signal (LEDGER era) = StAnnTx TopTx era
+  type Environment (LEDGER era) = Shelley.LedgerEnv era
+  type BaseM (LEDGER era) = ShelleyBase
+  type PredicateFailure (LEDGER era) = Shelley.ShelleyLedgerPredFailure era
+  type Event (LEDGER era) = Shelley.ShelleyLedgerEvent era
+
+  initialRules = []
+  transitionRules = [ledgerTransition @LEDGER]
+
+  renderAssertionViolation = Shelley.renderDepositEqualsObligationViolation
+
+  assertions = Shelley.shelleyLedgerAssertions
+
+instance
+  ( Era era
+  , STS (Shelley.DELEGS era)
+  , PredicateFailure (EraRule "DELEGS" era) ~ Shelley.ShelleyDelegsPredFailure era
+  , Event (EraRule "DELEGS" era) ~ Shelley.ShelleyDelegsEvent era
+  ) =>
+  Embed (Shelley.DELEGS era) (LEDGER era)
+  where
+  wrapFailed = Shelley.DelegsFailure
+  wrapEvent = Shelley.DelegsEvent
+
+instance
+  ( Era era
+  , STS (UTXOW era)
+  , PredicateFailure (EraRule "UTXOW" era) ~ AlonzoUtxowPredFailure era
+  , Event (EraRule "UTXOW" era) ~ AlonzoUtxowEvent era
+  ) =>
+  Embed (UTXOW era) (LEDGER era)
+  where
+  wrapFailed = Shelley.UtxowFailure
+  wrapEvent = Shelley.UtxowEvent
+
+instance
+  ( Era era
+  , STS (LEDGER era)
+  , PredicateFailure (EraRule "LEDGER" era) ~ Shelley.ShelleyLedgerPredFailure era
+  , Event (EraRule "LEDGER" era) ~ Shelley.ShelleyLedgerEvent era
+  ) =>
+  Embed (LEDGER era) (Shelley.LEDGERS era)
+  where
+  wrapFailed = Shelley.LedgerFailure
+  wrapEvent = Shelley.LedgerEvent

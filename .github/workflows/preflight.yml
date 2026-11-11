@@ -8,6 +8,10 @@ on:
       slug:
         description: challenges/<slug>
         required: true
+      upstream_tests:
+        description: "ledger-cbor: also build and run upstream's test suites on the baseline (#53)"
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -58,12 +62,42 @@ jobs:
         with:
           path: ${{ steps.hs.outputs.cabal-store }}
           key: ${{ steps.hs.outputs.cache-key }}
+      # Same as warm.yml: build the committed baseline (judge code, equal to
+      # candidate/ on a trusted run) and save the prebuilt reference + warm
+      # dist-cand, before cb preflight builds any broken variant into it. The
+      # cache is branch-scoped, so this speeds up reruns on the same branch;
+      # runs on any branch restore the one warm.yml saves on main.
+      - name: Warm baseline build (ledger cache miss only)
+        if: steps.hs.outputs.haskell == 'true' && steps.hs.outputs.ledger-hit != 'true'
+        run: |
+          cd "challenges/$SLUG"
+          diff -rq baseline candidate
+          start=$(date +%s)
+          ./build.sh
+          echo "warm baseline build: $(( ($(date +%s) - start) / 60 )) min" | tee -a ../../warm-setup.txt
+          du -sh ~/.cache/cb-"$SLUG"
+      - name: Save the prebuilt reference and warm baseline build
+        if: steps.hs.outputs.haskell == 'true' && steps.hs.outputs.ledger-hit != 'true'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.cache/cb-${{ inputs.slug }}
+          key: ${{ steps.hs.outputs.ledger-key }}
 
       - name: cb preflight
         # The Linux runner is the gate. macOS is a laptop-class report
         # (e.g. callgrind scoring is "no" there by design), so it never fails the run.
         continue-on-error: ${{ runner.os == 'macOS' }}
         run: ./target/release/cb preflight "$SLUG" --out preflight-out
+      - name: upstream test suites on the baseline (#53)
+        # Separate from cb preflight: the broken variants would fail these at
+        # build time instead of reaching the verifier. Times the step for #53.
+        if: inputs.upstream_tests && runner.os == 'Linux'
+        run: |
+          cd "challenges/$SLUG"
+          start=$(date +%s)
+          CB_UPSTREAM_TESTS=1 ./setup.sh
+          CB_UPSTREAM_TESTS=1 ./build.sh 2>&1 | tee ../../upstream-tests.txt
+          echo "upstream tests: $(( ($(date +%s) - start) / 60 )) min" | tee -a ../../upstream-tests.txt
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         if: always()
         with:
@@ -71,3 +105,4 @@ jobs:
           path: |
             preflight-out/
             warm-setup.txt
+            upstream-tests.txt
