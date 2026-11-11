@@ -284,7 +284,9 @@ On top of that it adds an `attempts` count by status.
 The toolkit gains `source = "builder"`, whose parser is just JSON-to-Snapshot
 (no HTML scraping like the yukon adapter), so `ar challenge
 pull/show/check/target` works unchanged. The feed's `schema_version` is owned
-here, and the toolkit pins the versions it accepts.
+here, and the toolkit pins the versions it accepts. The Site workflow
+publishes the feeds at
+`https://ryun1.github.io/auto-research-challenges/feeds/<slug>.json`.
 
 ## 6. Extraction from provably.fast
 
