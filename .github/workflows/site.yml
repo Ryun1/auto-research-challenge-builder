@@ -9,10 +9,10 @@ on:
   push:
     branches: [main]
   # Commits made with GITHUB_TOKEN (results.jsonl from Comment and Promote) do
-  # not fire push triggers, and runs in flight should show up as they start.
+  # not fire push triggers. Completions only: every run is billed minutes.
   workflow_run:
     workflows: [Submission, Comment, Promote, Preflight, Warm]
-    types: [requested, completed]
+    types: [completed]
   schedule:
     - cron: "41 5 * * *" # backstop; minutes are billed, so no tight polling
   workflow_dispatch:
@@ -22,9 +22,11 @@ permissions:
   actions: read
   pull-requests: read
 
+# One running, the newest one pending: bursts of events coalesce and a build in
+# progress is never starved by the next event.
 concurrency:
   group: site
-  cancel-in-progress: true
+  cancel-in-progress: false
 
 env:
   SITE_REPO: Ryun1/auto-research-challenges
@@ -45,18 +47,20 @@ jobs:
         run: ./target/release/cb feed --out site --base-url "$SITE_URL" --at "$(date -u +%FT%TZ)"
       - name: Pipeline state (recent runs, open PRs per challenge)
         run: |
+          set -o pipefail # a failed API call fails the step: no silently partial state
           gh api "repos/$REPO/actions/runs?per_page=100" --jq '[.workflow_runs[]
             | select(.name | IN("Submission", "Comment", "Promote", "Preflight", "Warm", "CI"))
             | {workflow: .name, title: .display_title, branch: .head_branch, event, status,
                conclusion, created_at, updated_at, url: .html_url}] | .[:40]' > runs.json
+          gh api "repos/$REPO/pulls?state=open&per_page=50" --jq '.[].number' > numbers.txt
           echo '[]' > pulls.json
-          for n in $(gh api "repos/$REPO/pulls?state=open&per_page=50" --jq '.[].number'); do
-            gh api "repos/$REPO/pulls/$n/files?per_page=100" \
-              --jq '[.[].filename | select(startswith("challenges/")) | split("/")[1]] | unique' > touched.json
+          while read -r n; do
+            gh api --paginate "repos/$REPO/pulls/$n/files?per_page=100" --jq '.[].filename' \
+              | jq -R -s 'split("\n") | map(select(startswith("challenges/")) | split("/")[1]) | unique' > touched.json
             gh api "repos/$REPO/pulls/$n" --jq '{number, title, author: .user.login, created_at,
               url: .html_url, draft}' | jq --slurpfile t touched.json '. + {challenges: $t[0]}' > pull.json
             jq --slurpfile p pull.json '. + $p' pulls.json > pulls.next && mv pulls.next pulls.json
-          done
+          done < numbers.txt
           jq -n --arg at "$(date -u +%FT%TZ)" --arg repo "$REPO" \
             --slurpfile runs runs.json --slurpfile pulls pulls.json \
             '{generated_at: $at, repo: $repo, runs: $runs[0], pulls: $pulls[0]}' > site/state.json

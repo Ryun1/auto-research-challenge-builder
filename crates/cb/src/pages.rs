@@ -208,6 +208,23 @@ fn candidate_title(candidates: &Path, slug: &str) -> Option<String> {
         .map(|t| clip(&redact_emails(t), 200))
 }
 
+/// What the public page says about why an attempt got its status. Reasons
+/// are `<category>: <detail>`, and the detail of a failed setup, build or
+/// score is the tail of that command's stderr, which a submission's build can
+/// write. Only the category is published; the detail stays in results.jsonl
+/// and the PR comment. Reasons with no detail are cb's own sentences.
+fn public_reason(reason: &str) -> String {
+    const WHOLE: &[&str] = &["wall-time guard: regressed"];
+    let kept = if WHOLE.contains(&reason) {
+        reason
+    } else {
+        reason
+            .split_once(':')
+            .map_or(reason, |(category, _)| category)
+    };
+    clip(&redact_emails(kept), MAX_REASON)
+}
+
 /// One challenge's public summary. `has_feed`: a feed was written for it.
 pub fn challenge(
     root: &Path,
@@ -277,7 +294,7 @@ pub fn challenge(
             json!({"at": str_of(&r["at"]), "stage": str_of(&r["stage"]), "status": str_of(&r["status"]),
                    "value": r["value"].as_f64(), "record_before": r["record_before"].as_f64(),
                    "by": str_of(&r["by"]), "model": str_of(&r["model"]), "commit": str_of(&r["commit"]),
-                   "reason": clip(&redact_emails(str_of(&r["reason"])), MAX_REASON)})
+                   "reason": public_reason(str_of(&r["reason"]))})
         })
         .collect();
     Ok(json!({
@@ -344,10 +361,16 @@ pub fn write(root: &Path, out: &Path, feeds: &[String], generated_at: &str) -> R
         .parent()
         .map(|p| p.join("candidates"))
         .unwrap_or_else(|| "candidates".into());
-    let challenges = slugs(root)?
+    // A challenge that doesn't load is left off the page, not fatal: Comment
+    // and Promote run `cb feed` before they commit results and comment.
+    let challenges: Vec<Value> = slugs(root)?
         .iter()
-        .map(|s| challenge(root, &candidates, s, feeds.contains(s)))
-        .collect::<Result<Vec<_>, _>>()?;
+        .filter_map(|s| {
+            challenge(root, &candidates, s, feeds.contains(s))
+                .map_err(|e| eprintln!("site: skipping {s}: {e}"))
+                .ok()
+        })
+        .collect();
     let data = json!({
         "site_schema_version": SITE_SCHEMA_VERSION,
         "generated_at": generated_at,
@@ -391,6 +414,37 @@ mod tests {
             "mail [email] or @alice"
         );
         assert_eq!(clip("abcdef", 3), "abc…");
+    }
+
+    #[test]
+    fn only_the_category_of_a_reason_is_public() {
+        for (reason, public) in [
+            ("build: exit status: 1 /home/runner/x.hs:3: SECRET", "build"),
+            ("record build: killed after 60 min", "record build"),
+            (
+                "the record (abc) did not verify and score on this sample: boom",
+                "the record (abc) did not verify and score on this sample",
+            ),
+            ("wall-time guard: regressed", "wall-time guard: regressed"),
+            ("verify failed", "verify failed"),
+            ("1.02 beats 1 by >= 0.01", "1.02 beats 1 by >= 0.01"),
+            ("", ""),
+        ] {
+            assert_eq!(public_reason(reason), public);
+        }
+    }
+
+    #[test]
+    fn a_challenge_that_does_not_load_is_skipped() {
+        let root = crate::paths::scratch("pages-skip").join("challenges");
+        let out = root.parent().unwrap().join("out");
+        std::fs::create_dir_all(root.join("wip")).unwrap();
+        std::fs::write(root.join("wip/challenge.toml"), "[challenge]\n").unwrap();
+        write(&root, &out, &[], "2026-01-01T00:00:00Z").unwrap();
+        let data: Value =
+            serde_json::from_str(&std::fs::read_to_string(out.join("challenges.json")).unwrap())
+                .unwrap();
+        assert_eq!(data["challenges"], json!([]));
     }
 
     #[test]
