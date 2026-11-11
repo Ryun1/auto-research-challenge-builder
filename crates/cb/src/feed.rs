@@ -1,5 +1,5 @@
 //! `cb feed` (PLAN.md §5): per-challenge JSON the toolkit reads natively,
-//! plus a public leaderboard page built from those feeds only.
+//! plus the public status site (`pages`).
 //!
 //! The feed carries the toolkit `Snapshot` fields (auto-research-toolkit
 //! src/autoresearch/challenge.py) so its `builder` source is a field mapping,
@@ -170,65 +170,9 @@ pub fn feed(root: &Path, slug: &str, url: &str, generated_at: &str) -> Result<Va
     }))
 }
 
-fn esc(s: &str) -> String {
-    s.replace('&', "&amp;")
-        .replace('<', "&lt;")
-        .replace('>', "&gt;")
-        .replace('"', "&quot;")
-        .replace('\'', "&#39;")
-}
-
-/// Public leaderboard page: built from feeds only (never from candidates/).
-pub fn leaderboard(feeds: &[Value]) -> String {
-    let mut out = String::from(
-        "<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">\
-         <title>Challenge leaderboards</title><style>\
-         :root{--bg:#fff;--fg:#1a1a1a;--muted:#666;--line:#ddd}@media (prefers-color-scheme:dark){:root{--bg:#151515;--fg:#e8e8e8;--muted:#999;--line:#333}}\
-         body{background:var(--bg);color:var(--fg);font:15px/1.5 system-ui,sans-serif;max-width:960px;margin:0 auto;padding:16px}\
-         table{border-collapse:collapse;width:100%}.wrap{overflow-x:auto}th,td{border-bottom:1px solid var(--line);padding:4px 8px;text-align:left}\
-         td.n{text-align:right;font-variant-numeric:tabular-nums}.muted{color:var(--muted)}section{margin-top:24px}</style></head><body>\
-         <h1>Challenge leaderboards</h1>",
-    );
-    for f in feeds {
-        let slug = esc(str_of(&f["challenge"]));
-        let bar = &f["bar"];
-        out += &format!(
-            "<section id=\"{slug}\"><h2>{slug}</h2><p class=\"muted\">{} {} · bar {} bips · {} · <a href=\"feeds/{slug}.json\">feed</a></p>",
-            esc(str_of(&bar["direction"])),
-            esc(str_of(&bar["metric"])),
-            bar["min_improvement_bips"],
-            esc(str_of(&f["truth_label"]))
-        );
-        let num = |v: &Value| {
-            v.as_f64()
-                .map(|x| format!("{x}"))
-                .unwrap_or_else(|| "–".into())
-        };
-        out += &format!(
-            "<p>Record: <b>{}</b> · baseline {} · attempts {}</p>",
-            num(&f["record"]["value"]),
-            num(&bar["baseline"]),
-            f["attempts_count"]
-        );
-        out += "<div class=\"wrap\"><table><tr><th>#</th><th>Solver</th><th>Value</th><th>Δ vs baseline</th><th>At</th></tr>";
-        for row in f["board"].as_array().into_iter().flatten() {
-            out += &format!(
-                "<tr><td class=\"n\">{}</td><td>{}</td><td class=\"n\">{}</td><td class=\"n\">{}</td><td>{}</td></tr>",
-                row["rank"],
-                esc(str_of(&row["solver"])),
-                num(&row["value"]),
-                row["delta_pct"].as_f64().map(|p| format!("{p:+}%")).unwrap_or_else(|| "–".into()),
-                esc(str_of(&row["at"]))
-            );
-        }
-        out += "</table></div></section>";
-    }
-    out += "</body></html>\n";
-    out
-}
-
-/// Writes `<out>/feeds/<slug>.json` for every challenge with results, and
-/// `<out>/index.html`. `base_url` is where `<out>` is served.
+/// Writes `<out>/feeds/<slug>.json` for every challenge with results, and the
+/// status site (`pages`) covering every challenge. `base_url` is where `<out>`
+/// is served.
 pub fn build(
     root: &Path,
     out: &Path,
@@ -252,7 +196,7 @@ pub fn build(
             .map_err(|e| format!("{}: {e}", path.display()))?;
         feeds.push(f);
     }
-    std::fs::write(out.join("index.html"), leaderboard(&feeds)).map_err(|e| e.to_string())?;
+    crate::pages::write(root, out, &slugs, generated_at)?;
     Ok(slugs)
 }
 
@@ -349,6 +293,28 @@ mod tests {
         let out = crate::paths::scratch("feed-out");
         assert_eq!(build(&root, &out, "https://x", "t").unwrap(), vec!["toy"]);
         let html = std::fs::read_to_string(out.join("index.html")).unwrap();
-        assert!(html.contains("alice") && !html.contains("<script"));
+        assert!(html.contains("alice") && html.contains("assets/app.js"));
+        assert!(out.join("assets/style.css").exists());
+        let site: Value =
+            serde_json::from_str(&std::fs::read_to_string(out.join("challenges.json")).unwrap())
+                .unwrap();
+        let toy = &site["challenges"][0];
+        assert_eq!(toy["state"], "open");
+        assert_eq!(toy["record"]["by"], "alice");
+        assert_eq!(toy["baseline"]["value"], 50.0);
+        assert_eq!(toy["attempts"][0]["status"], "rejected"); // newest first
+        assert_eq!(toy["feed"], "feeds/toy.json");
+
+        // A challenge without results still appears, without a feed.
+        crate::challenge::scaffold(&root, "fresh", "math", None).unwrap();
+        assert_eq!(build(&root, &out, "https://x", "t").unwrap(), vec!["toy"]);
+        let site: Value =
+            serde_json::from_str(&std::fs::read_to_string(out.join("challenges.json")).unwrap())
+                .unwrap();
+        let fresh = &site["challenges"][0];
+        assert_eq!(fresh["slug"], "fresh");
+        assert_eq!(fresh["state"], "draft");
+        assert!(fresh["feed"].is_null() && fresh["baseline"].is_null());
+        assert!(!out.join("feeds/fresh.json").exists());
     }
 }
