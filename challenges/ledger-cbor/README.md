@@ -35,8 +35,14 @@ judge code (`harness/HeapWalk.hs`): nothing may be left unevaluated, and the
 value may hold no more function closures than the reference's.
 
 **Score.** Callgrind instructions to decode 800 seeded txs once, minus a 0-pass
-run (start-up plus reading the input). The RTS timer is off (`-V0`), so counts are deterministic: `speedup = reference / candidate`. A paired wall-time run guards
-against regressions (as in `kits/rust`).
+run (start-up plus reading the input). The timed pass is `harness decode`:
+`decodeFullAnnotator` at PV 11 into `MempoolTx ConwayEra`, then `rnf`. The RTS timer is off (`-V0`), so counts are deterministic: `speedup = reference / candidate`. A paired wall-time run guards
+against regressions (as in `kits/rust`). It rejects a candidate whose wall-time speedup is below 0.92
+(`max_dispersion`), and a run too noisy to judge is `infra_failed`. In CI
+(`CB_POOL=fresh`) the txs come from a pool of recent mainnet blocks fetched
+for that run. `corpus/pool.hex.gz` is only for local runs. To count, a change
+must beat the record by 1% (`min_improvement_bips = 100`).
+[SUBMITTING.md](SUBMITTING.md) walks through a submission.
 
 **Policy.** `cb gate` checks every `src/` file against its baseline
 counterpart with an allowlist (`crates/cb/src/haskellpolicy.rs`, #51): safe
@@ -70,7 +76,11 @@ times this on the baseline.
 **Promotion.** Each of the two promotion runs scores the record's tree too, on
 the same fresh pool and seed, and `cb record` decides on candidate/record
 (#57). Measure run 42721883592 showed that two different pools disagree by
-more than the agreement window once a win is 5% or more.
+more than the agreement window once a win is 5% or more. Promotion needs both
+runs to pass and their candidate/record ratios to agree within 0.5% (half the
+bar). The mean ratio must be at least 1.01. Any other outcome, infra failures
+included, reverts `candidate/` on `main` to the record's tree.
 
 Needs Linux (valgrind), GHC 9.6.7, cabal 3.16, and libsodium, secp256k1 and
-blst. CI installs them with `input-output-hk/actions/base`.
+blst. CI installs them with `input-output-hk/actions/base`. `setup.sh` uses
+GNU `sed -i`, so it doesn't run on macOS. The gate (`cb gate`) does.

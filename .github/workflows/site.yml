@@ -1,0 +1,89 @@
+# Publishes the status site. This repo is private on the Free plan (no Pages
+# here), so the generated site is pushed to the public repo SITE_REPO, whose
+# Pages serves it. Trusted: runs main's copy on main's tree and never builds or
+# runs submission code; PR titles and run names are data, written as JSON by jq
+# and rendered as text by the page. Everything pushed is public.
+name: Site
+
+on:
+  push:
+    branches: [main]
+  # Commits made with GITHUB_TOKEN (results.jsonl from Comment and Promote) do
+  # not fire push triggers. Completions only: every run is billed minutes.
+  workflow_run:
+    workflows: [Submission, Comment, Promote, Preflight, Warm]
+    types: [completed]
+  schedule:
+    - cron: "41 5 * * *" # backstop; minutes are billed, so no tight polling
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+  pull-requests: read
+
+# One running, the newest one pending: bursts of events coalesce and a build in
+# progress is never starved by the next event.
+concurrency:
+  group: site
+  cancel-in-progress: false
+
+env:
+  SITE_REPO: Ryun1/auto-research-challenges
+  SITE_URL: https://ryun1.github.io/auto-research-challenges
+
+jobs:
+  publish:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: main # workflow_run's sha predates the results commit it follows
+          persist-credentials: false
+      - run: rustup toolchain install
+      - run: cargo build --locked --release
+      - name: Feeds and pages
+        run: ./target/release/cb feed --out site --base-url "$SITE_URL" --at "$(date -u +%FT%TZ)"
+      - name: Pipeline state (recent runs, open PRs per challenge)
+        run: |
+          set -o pipefail # a failed API call fails the step: no silently partial state
+          gh api "repos/$REPO/actions/runs?per_page=100" --jq '[.workflow_runs[]
+            | select(.name | IN("Submission", "Comment", "Promote", "Preflight", "Warm", "CI"))
+            | {workflow: .name, title: .display_title, branch: .head_branch, event, status,
+               conclusion, created_at, updated_at, url: .html_url}] | .[:40]' > runs.json
+          gh api "repos/$REPO/pulls?state=open&per_page=50" --jq '.[].number' > numbers.txt
+          echo '[]' > pulls.json
+          while read -r n; do
+            gh api --paginate "repos/$REPO/pulls/$n/files?per_page=100" --jq '.[].filename' \
+              | jq -R -s 'split("\n") | map(select(startswith("challenges/")) | split("/")[1]) | unique' > touched.json
+            gh api "repos/$REPO/pulls/$n" --jq '{number, title, author: .user.login, created_at,
+              url: .html_url, draft}' | jq --slurpfile t touched.json '. + {challenges: $t[0]}' > pull.json
+            jq --slurpfile p pull.json '. + $p' pulls.json > pulls.next && mv pulls.next pulls.json
+          done < numbers.txt
+          jq -n --arg at "$(date -u +%FT%TZ)" --arg repo "$REPO" \
+            --slurpfile runs runs.json --slurpfile pulls pulls.json \
+            '{generated_at: $at, repo: $repo, runs: $runs[0], pulls: $pulls[0]}' > site/state.json
+          jq '{generated_at, runs: (.runs | length), pulls: (.pulls | length)}' site/state.json
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+      - name: Push to the site repo
+        run: |
+          install -d -m 700 ~/.ssh
+          printf '%s\n' "$SITE_DEPLOY_KEY" > ~/.ssh/site && chmod 600 ~/.ssh/site
+          # GitHub's published host key (https://api.github.com/meta), pinned.
+          echo "github.com ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOMqqnkVzrm0SdG6UOoqKLsabgH5C9okWi0dh2l9GKJl" > ~/.ssh/site_hosts
+          export GIT_SSH_COMMAND="ssh -i ~/.ssh/site -o IdentitiesOnly=yes -o UserKnownHostsFile=$HOME/.ssh/site_hosts -o StrictHostKeyChecking=yes"
+          git clone -q --depth 1 "git@github.com:$SITE_REPO.git" out
+          # The site repo keeps its own README and .nojekyll; everything else is generated.
+          rsync -a --delete --exclude .git --exclude README.md --exclude .nojekyll site/ out/
+          cd out
+          git add -A
+          git config user.name "cb-bot"
+          git config user.email "cb-bot@users.noreply.github.com"
+          git commit -qm "site: ${GITHUB_REPOSITORY}@${GITHUB_SHA::7} ($GITHUB_EVENT_NAME)"
+          git push -q origin HEAD:main
+          rm -f ~/.ssh/site
+        env:
+          SITE_DEPLOY_KEY: ${{ secrets.SITE_DEPLOY_KEY }}

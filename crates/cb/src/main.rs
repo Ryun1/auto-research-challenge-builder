@@ -6,6 +6,7 @@ mod candidate;
 mod challenge;
 mod feed;
 mod haskellpolicy;
+mod pages;
 mod paths;
 mod pipeline;
 mod policy;
@@ -145,7 +146,7 @@ enum Command {
         #[arg(long)]
         entry: Option<PathBuf>,
     },
-    /// Write per-challenge feed JSON (toolkit Snapshot fields) + public leaderboard
+    /// Write per-challenge feed JSON (toolkit Snapshot fields) + the public status site
     Feed {
         #[arg(long, default_value = "challenges")]
         root: PathBuf,
@@ -200,7 +201,7 @@ fn main() -> ExitCode {
             at,
         } => feed::build(&root, &out, &base_url, &at).map(|slugs| {
             println!(
-                "wrote {} feed(s) + index.html to {}: {}",
+                "wrote {} feed(s) + status site to {}: {}",
                 slugs.len(),
                 out.display(),
                 slugs.join(", ")
