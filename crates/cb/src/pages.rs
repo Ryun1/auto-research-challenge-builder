@@ -133,11 +133,48 @@ fn readme(dir: &Path, slug: &str) -> (Option<String>, Option<String>) {
     ((!title.is_empty()).then(|| plain(&title)), summary)
 }
 
-/// The numbered steps of SUBMITTING.md, as plain text.
+/// `## 3. Title` -> `Title`.
+fn numbered_heading(para: &str) -> Option<&str> {
+    let (n, title) = para.strip_prefix("## ")?.split_once(". ")?;
+    (!n.is_empty() && n.chars().all(|c| c.is_ascii_digit()) && !title.contains('\n'))
+        .then_some(title)
+}
+
+/// A walkthrough SUBMITTING.md (`## 1. Title` sections): each section's title
+/// and its first paragraph of prose. Its numbered lists are sub-steps.
+fn submit_sections(text: &str) -> Vec<String> {
+    let paras = paragraphs(text);
+    let mut steps = Vec::new();
+    for (i, p) in paras.iter().enumerate() {
+        let Some(title) = numbered_heading(p) else {
+            continue;
+        };
+        let lead = paras
+            .get(i + 1)
+            .filter(|n| !n.starts_with(['#', '|', '-', '*', '`', '<', '>']))
+            .filter(|n| !n.starts_with(|c: char| c.is_ascii_digit()))
+            .map(|n| match plain(n).strip_suffix(':') {
+                Some(lead) => format!("{lead}."),
+                None => plain(n),
+            });
+        steps.push(match lead {
+            Some(lead) => format!("{}. {lead}", plain(title).trim_end_matches('.')),
+            None => plain(title),
+        });
+    }
+    steps
+}
+
+/// The steps of SUBMITTING.md, as plain text: its numbered sections if it is
+/// a walkthrough, else its numbered list.
 fn submit_steps(dir: &Path) -> Vec<String> {
     let Ok(text) = std::fs::read_to_string(dir.join("SUBMITTING.md")) else {
         return Vec::new();
     };
+    let sections = submit_sections(&text);
+    if sections.len() >= 2 {
+        return sections.iter().map(|s| clip(s, 400)).take(8).collect();
+    }
     let mut steps: Vec<String> = Vec::new();
     let mut in_list = false;
     for line in text.lines() {
@@ -390,6 +427,21 @@ mod tests {
         assert_eq!(
             submit_steps(&dir),
             vec!["Open a PR under candidate/.", "CI scores it."]
+        );
+        // A walkthrough: the numbered sections are the steps, not its lists.
+        std::fs::write(
+            dir.join("SUBMITTING.md"),
+            "# Submitting\n\nIntro.\n\n## 1. Branch, don't fork\n\nPush a `branch`\nhere.\n\n```sh\ngit x\n```\n\n\
+             ## 2. What you may change\n\n- Only `.hs` files.\n\n## 3. Read the result\n\n1. **Gate**, a minute.\n2. Score.\n",
+        )
+        .unwrap();
+        assert_eq!(
+            submit_steps(&dir),
+            vec![
+                "Branch, don't fork. Push a branch here.",
+                "What you may change",
+                "Read the result"
+            ]
         );
     }
 }
