@@ -13,6 +13,7 @@ challenges/*/Cargo.lock     @Ryun1
 challenges/*/setup.sh       @Ryun1
 challenges/*/build.sh       @Ryun1
 challenges/*/packages.txt   @Ryun1
+challenges/*/upstream-tests.txt @Ryun1
 challenges/*/corpus/        @Ryun1
 challenges/*/baseline/      @Ryun1
 challenges/*/preflight/     @Ryun1

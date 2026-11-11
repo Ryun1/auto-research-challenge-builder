@@ -69,7 +69,7 @@ build, verify and score in a scratch copy, as CI does (without the sandbox).
 
 Local runs use the repo pool (`corpus/pool.hex.gz`). CI scores a fresh pool of
 recent mainnet transactions, so local numbers are a guide, not the score.
-Upstream's test suites for the eight packages only run at promotion
+Upstream's test suites (five packages, `upstream-tests.txt`) only run at promotion
 (`CB_UPSTREAM_TESTS=1 ./setup.sh && CB_UPSTREAM_TESTS=1 ./build.sh` runs them
 locally). A change that breaks other eras or the ledger rules fails there,
 even if the harness never calls that code.
@@ -121,7 +121,8 @@ The maintainer merges PRs one at a time. The merge starts the **Promote**
 workflow on `main`, which takes hours. It makes two independent runs, each on
 its own fresh pool and seed. Each run scores your tree and the current
 record's tree on the same sample, and it also builds and runs the upstream
-test suites of all eight packages. The attempt is **promoted** only if both
+test suites of five packages (binary, core, shelley, allegra, mary; see
+`upstream-tests.txt`). The attempt is **promoted** only if both
 runs pass, they agree on candidate/record within 0.5%, and the ratio is at
 least 1.01. Otherwise, infrastructure failures included, a bot commit puts
 `candidate/` on `main` back to the record's tree, and the attempt is recorded

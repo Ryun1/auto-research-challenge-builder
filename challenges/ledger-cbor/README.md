@@ -68,10 +68,12 @@ throwaway overlay.
 
 **Upstream tests.** The harness only decodes Conway mempool txs at PV 11, but
 the editable packages serve every era, blocks and ledger state. So a promotion
-also builds and runs each editable package's own upstream `tests` suite
-against the candidate (`CB_UPSTREAM_TESTS=1`, #53). The cabal files and tests
-are the pinned upstream ones. The Preflight workflow's `upstream_tests` input
-times this on the baseline.
+also builds and runs upstream's own `tests` suite of the packages listed in
+`upstream-tests.txt` against the candidate (`CB_UPSTREAM_TESTS=1`, #53):
+binary, core, shelley, allegra and mary. The alonzo, babbage and conway suites
+don't fit the runner's time limits yet and are not run. The cabal files and
+tests are the pinned upstream ones. The Preflight workflow's `upstream_tests`
+input runs this on the baseline, in the same no-network build sandbox.
 
 **Promotion.** Each of the two promotion runs scores the record's tree too, on
 the same fresh pool and seed, and `cb record` decides on candidate/record

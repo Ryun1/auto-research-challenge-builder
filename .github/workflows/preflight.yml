@@ -12,6 +12,10 @@ on:
         description: "ledger-cbor: also build and run upstream's test suites on the baseline (#53)"
         type: boolean
         default: false
+      skip_preflight:
+        description: "skip cb preflight (to iterate on the upstream-tests step)"
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -88,19 +92,22 @@ jobs:
       - name: cb preflight
         # The Linux runner is the gate. macOS is a laptop-class report
         # (e.g. callgrind scoring is "no" there by design), so it never fails the run.
+        if: ${{ !inputs.skip_preflight }}
         continue-on-error: ${{ runner.os == 'macOS' }}
         run: ./target/release/cb preflight "$SLUG" --out preflight-out
-      - name: upstream test suites on the baseline (#53)
-        # Separate from cb preflight: the broken variants would fail these at
-        # build time instead of reaching the verifier. Times the step for #53.
+      - name: upstream test suites on the baseline, built as a promotion builds them (#53)
+        # Through cb score's build sandbox (no network), as Promote does. Run
+        # unsandboxed, this step passed its build while both sandboxed baseline
+        # runs were rejected (43060093096, 43064726976: cabal re-synced the
+        # test project's source-repository-packages with no network).
         if: inputs.upstream_tests && runner.os == 'Linux'
-        shell: bash # -o pipefail: a failing suite must fail the step, not tee
+        shell: bash
         run: |
-          cd "challenges/$SLUG"
           start=$(date +%s)
-          CB_UPSTREAM_TESTS=1 ./setup.sh
-          CB_UPSTREAM_TESTS=1 ./build.sh 2>&1 | tee ../../upstream-tests.txt
-          echo "upstream tests: $(( ($(date +%s) - start) / 60 )) min" | tee -a ../../upstream-tests.txt
+          CB_UPSTREAM_TESTS=1 ./target/release/cb score "$SLUG" --baseline --sandbox --out upstream-score.json || true
+          jq '{status, reason, value, sandboxed}' upstream-score.json
+          echo "upstream tests: $(( ($(date +%s) - start) / 60 )) min" | tee upstream-tests.txt
+          [ "$(jq -r .status upstream-score.json)" = valid ]
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         if: always()
         with:
@@ -109,3 +116,4 @@ jobs:
             preflight-out/
             warm-setup.txt
             upstream-tests.txt
+            upstream-score.json

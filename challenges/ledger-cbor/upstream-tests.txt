@@ -1,0 +1,12 @@
+# Packages whose upstream `tests` suite gates a promotion (#53): setup.sh
+# downloads their dependencies, build.sh builds and runs them (CB_UPSTREAM_TESTS=1).
+# Measured on the 2-vCPU runner (Preflight 43057114325): these five pass in
+# 5 min after a 30 min build of all eight. The alonzo suite ran 30 min without
+# finishing and was killed; babbage and conway never ran, and the whole build
+# is one cb command capped at 60 min. So alonzo, babbage and conway are not
+# gated by their suites yet (see THREAT_MODEL.md).
+cardano-ledger-binary
+cardano-ledger-core
+cardano-ledger-shelley
+cardano-ledger-allegra
+cardano-ledger-mary
