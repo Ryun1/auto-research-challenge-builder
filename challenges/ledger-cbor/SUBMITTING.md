@@ -79,6 +79,12 @@ even if the harness never calls that code.
 Opening the PR, and every later push to it, starts the **Submission**
 workflow. A new push cancels the run in progress for that PR.
 
+Every run is billed to the maintainer, so each GitHub account gets **10
+Submission runs per rolling 24 hours**, counting every push to an open PR,
+cancelled and refused runs included. The eleventh gets a comment beginning
+"Refused by the gate" with "daily cap", and nothing is built. Measure locally
+(step 3) and push when you have something to score.
+
 1. **Gate**, about a minute. If it refuses, you get a comment beginning
    "Refused by the gate" with the reasons. Nothing is built or recorded.
 2. **Score.** The job restores the prebuilt reference, rebuilds your changed

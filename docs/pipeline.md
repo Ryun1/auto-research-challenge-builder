@@ -89,6 +89,13 @@ protected by a ruleset (needs GitHub Pro on a private repo). Its definition is
   environment `site`) is scoped the same way. A repository-level secret would
   be readable by a workflow pushed to any branch. `scripts/setup-deploy-keys.sh`
   creates or rotates both keys.
+- **PRs into main only:** Submission and Comment act only on PRs whose base
+  is `main`. The jobs check out `pull_request.base.sha` and build `cb` from
+  it, so a PR into a collaborator's own branch would run that branch's code as
+  the judge, and Comment would record what it uploaded. The gate job also
+  compares the base branch name in bash (expressions ignore case) and refuses
+  a base commit that is not on `main`, before anything from the checkout runs.
+  Check: `scripts/malicious-prs.sh non-main-base`.
 - **Commit messages:** a deploy-key push fires push workflows, unlike a
   workflow-token push, so the results commits end in `[skip actions]`.
 - **Audit:** `scripts/audit-main.sh` reads GitHub's push log for `main` and
@@ -101,3 +108,36 @@ The record only moves through `results.jsonl` on `main`, so a score comment
 is a claim to check against the Submission run, not proof. A PR whose merge
 commit message contains `[skip ci]` or `[skip actions]` would not be promoted:
 check the title before merging.
+
+## Actions minutes
+
+The repo is private, so every run is billed (GitHub Pro includes 3,000
+minutes a month). Measured on 2026-11-12 for `ledger-cbor`: a push to a
+submission PR costs about 13 minutes (score 10, gate, Comment and Site about
+1 each), a merge about 50 (two promotion runs of about 20, CI 7, Site), a Warm
+rebuild about 40.
+
+- **Daily cap:** the gate job refuses an account's Submission runs beyond
+  `DAILY_CAP` (10) in a rolling 24 hours (`.github/scripts/daily-cap.sh`,
+  called from `submission.yml`). Every run counts, cancelled and refused ones
+  included, and nobody is exempt. The refusal is a gate refusal, so the PR gets
+  a comment and nothing is built.
+- **No CI on candidate-only PRs** (`paths-ignore` in `ci.yml`): CI tests
+  nothing of a submission.
+- **Site** publishes after Comment, not after Submission as well.
+
+The cap limits scored runs, not minutes. Not covered:
+
+- a capped push still bills its gate job, Comment and Site, about 3 minutes,
+  with no limit on how many;
+- CI still runs (about 7 minutes) for every push to a PR that touches a
+  non-candidate file, into any base branch;
+- re-running an old run from the Actions tab (a new attempt of the same run,
+  not a new run);
+- a collaborator dispatching Preflight, Warm, Promote, Calibrate or Site by
+  hand, or pushing a workflow to their own branch.
+
+Only the account budget bounds those. The budget and its alerts (Settings > Billing and licensing > Budgets
+and alerts) are the backstop for those. When the minutes run out, GitHub
+refuses to start jobs: a job that fails in seconds with no steps has a billing
+annotation on its check run.
