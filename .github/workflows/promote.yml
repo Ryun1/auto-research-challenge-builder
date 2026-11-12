@@ -115,17 +115,19 @@ jobs:
           name: score-${{ matrix.n }}
           path: score.json
 
+  # main's ruleset (#22) stops the workflow token pushing, so the results commit
+  # goes out with the `results` environment's deploy key (see comment.yml).
   record:
     needs: [detect, run]
     runs-on: ubuntu-24.04
+    environment: results
     timeout-minutes: 15
-    permissions:
-      contents: write
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: main
           fetch-depth: 0
+          ssh-key: ${{ secrets.RESULTS_DEPLOY_KEY }}
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           pattern: score-*
@@ -149,7 +151,9 @@ jobs:
             done
             msg="$msg; revert editable to record ${rc::7}"
           fi
-          git commit -qam "$msg"
+          # [skip actions]: a deploy-key push would otherwise start CI, Site and this
+          # workflow again (a revert changes candidate/).
+          git commit -qam "$msg [skip actions]"
           # Only results.jsonl (union-merged) and, on a revert, the candidate are
           # committed; the Site workflow publishes the feeds. A rebase that still
           # conflicts (a merge touched the reverted files) is aborted, and nothing
