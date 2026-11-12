@@ -8,8 +8,8 @@ name: Site
 on:
   push:
     branches: [main]
-  # Commits made with GITHUB_TOKEN (results.jsonl from Comment and Promote) do
-  # not fire push triggers. Completions only: every run is billed minutes.
+  # The results commits from Comment and Promote carry [skip actions], so they
+  # do not fire push triggers. Completions only: every run is billed minutes.
   workflow_run:
     workflows: [Submission, Comment, Promote, Preflight, Warm]
     types: [completed]
@@ -35,6 +35,9 @@ env:
 jobs:
   publish:
     runs-on: ubuntu-24.04
+    # SITE_DEPLOY_KEY is a secret of this environment, usable only by runs on
+    # main: as a repository secret, a workflow on any branch could read it.
+    environment: site
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1

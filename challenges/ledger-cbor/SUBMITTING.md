@@ -22,9 +22,9 @@ Don't open PRs from a fork: the workflow that posts results can't link a fork's
 run back to the PR, so you would get no comment. Target `main`. The workflows
 and the judge come from the PR's base branch.
 
-You have write access because GitHub needs it to run the PR workflows. Don't
-push to `main` and don't merge your own PR (nothing technically stops you).
-The maintainer merges.
+You have write access because GitHub needs it to run the PR workflows. `main`
+is protected: it only changes through a PR the maintainer has approved, and
+the maintainer merges.
 
 ## 2. What you may change
 
@@ -97,7 +97,7 @@ The **Comment** workflow then posts a new comment on the PR:
 | status `rejected`, reason `build: ...` | it didn't compile (or the build ran past 60 min) |
 | status `rejected`, reason `verify failed` | some output, re-encoding, accept/reject result or `rnf` result differs from the reference |
 | status `rejected`, reason `wall-time guard: regressed` | the paired wall-time run put your build below 0.92× the reference's speed |
-| status `infra_failed` | setup failed or wall time was too noisy to judge. Not your change: push again or ask the maintainer to re-run |
+| status `infra_failed` | setup failed or wall time was too noisy to judge in three attempts. Not your change: push again or ask the maintainer to re-run |
 | "No score was produced" | the score job died before writing a result. See the run |
 
 The comment gives the status, the speedup and the wall-time guard only. For
@@ -118,7 +118,8 @@ runs that produced no score are not recorded.
 ## 5. After the merge
 
 The maintainer merges PRs one at a time. The merge starts the **Promote**
-workflow on `main`, which takes hours. It makes two independent runs, each on
+workflow on `main`, which takes about 20 minutes with warm caches (longer
+after a cold rebuild). It makes two independent runs, each on
 its own fresh pool and seed. Each run scores your tree and the current
 record's tree on the same sample, and it also builds and runs the upstream
 test suites of five packages (binary, core, shelley, allegra, mary; see
