@@ -77,7 +77,10 @@ jobs:
         run: |
           cd "challenges/$SLUG"
           start=$(date +%s)
-          ./setup.sh
+          # CB_UPSTREAM_TESTS=1: also build the upstream suites' dependencies (#53),
+          # so a promotion's setup is a cache hit and its offline build only
+          # compiles what the candidate changed and the test suites.
+          CB_UPSTREAM_TESTS=1 ./setup.sh
           echo "setup: $(( ($(date +%s) - start) / 60 )) min"
           ./build.sh
           echo "setup + baseline build: $(( ($(date +%s) - start) / 60 )) min"

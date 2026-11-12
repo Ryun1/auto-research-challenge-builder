@@ -50,11 +50,12 @@ grep -v '^#' packages.txt | while read -r name path; do
   # -c: unchanged files keep their mtime, so GHC's recompilation check stays warm.
   rsync -a -c --delete "candidate/$name/src/" "$L/cand/$name/src/"
 done
-# --offline: CI builds with no network (build sandbox), and setup.sh already
-# downloaded everything. Without it cabal re-syncs the project's
-# source-repository-packages on the first build after setup's --only-download
-# and dies on "Could not resolve host: github.com" (Promote 43060093096, cold
-# ledger cache). With it cabal skips the sync and reads the existing checkouts.
+# --offline: CI builds with no network (build sandbox). Without it cabal
+# re-syncs the project's source-repository-packages on the first build after
+# setup's --only-download and dies on "Could not resolve host: github.com"
+# (Promote 43060093096, 43064726976). With it cabal skips the sync and reads
+# the existing checkouts, but it also refuses any plan that still has a
+# repository package to build: setup.sh must have built every dependency.
 ( cd "$L" && cabal build -v1 --offline --project-file=cabal.project.cand --builddir=dist-cand ledger-cbor-harness )
 cp "$(cd "$L" && cabal list-bin --project-file=cabal.project.cand --builddir=dist-cand ledger-cbor-harness)" .bin/candidate
 # cp onto an existing file keeps its mode, and the build sandbox pre-creates
@@ -63,7 +64,7 @@ chmod 755 .bin/candidate
 
 # #53: upstream's own test suites for the packages in upstream-tests.txt, against the
 # candidate (the harness only decodes Conway mempool txs at PV 11). Slow, so
-# opt-in: promotion and preflight set CB_UPSTREAM_TESTS=1. setup.sh fetched
+# opt-in: promotion and preflight set CB_UPSTREAM_TESTS=1. setup.sh built
 # their dependencies (the CI build has no network). Separate project and
 # builddir: the tests are built with upstream's +asserts (cabal.project.test,
 # see setup.sh), and dist-cand should stay warm for the harness.
