@@ -4,11 +4,16 @@
 # compiles them offline and runs verify/score as nobody with no network.
 # No secrets, read-only token. The score it uploads is a claim; comment.yml
 # posts it, and only promote.yml (on main) decides the record.
+#
+# Only PRs into main: the jobs check out pull_request.base.sha and build cb
+# from it, so a PR into a collaborator's own branch would run that branch's
+# code as the judge (#22; scripts/malicious-prs.sh non-main-base).
 name: Submission
 
 on:
   pull_request_target:
     types: [opened, synchronize, reopened]
+    branches: [main] # the PR's base branch
 
 permissions:
   contents: read
@@ -19,6 +24,7 @@ concurrency:
 
 jobs:
   gate:
+    if: github.event.pull_request.base.ref == 'main' # as the trigger; score needs this job
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     outputs:

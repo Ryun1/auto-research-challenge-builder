@@ -89,6 +89,11 @@ protected by a ruleset (needs GitHub Pro on a private repo). Its definition is
   environment `site`) is scoped the same way. A repository-level secret would
   be readable by a workflow pushed to any branch. `scripts/setup-deploy-keys.sh`
   creates or rotates both keys.
+- **PRs into main only:** Submission and Comment act only on PRs whose base
+  is `main`. The jobs check out `pull_request.base.sha` and build `cb` from
+  it, so a PR into a collaborator's own branch would run that branch's code as
+  the judge, and Comment would record what it uploaded. Check:
+  `scripts/malicious-prs.sh non-main-base`.
 - **Commit messages:** a deploy-key push fires push workflows, unlike a
   workflow-token push, so the results commits end in `[skip actions]`.
 - **Audit:** `scripts/audit-main.sh` reads GitHub's push log for `main` and
