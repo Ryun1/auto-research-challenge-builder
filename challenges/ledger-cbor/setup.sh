@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Scoring pool, pinned cardano-ledger and the reference build.
-# Never compiles candidate/ (build.sh does). Idempotent.
+# Never compiles candidate/ (build.sh does); with CB_UPSTREAM_TESTS=1 it builds
+# the upstream suites' dependencies from baseline/. Idempotent.
 #
 # The clone and build outputs live in one shared cache, not in the workspace:
 # preflight runs setup once per workspace (baseline + each broken variant), and
@@ -83,11 +84,24 @@ mkdir -p .bin
   # source-repository-packages into dist-cand and download its deps now. cabal
   # records the sync, so the offline build doesn't fetch again. No compiling.
   cabal build -v1 --project-file=cabal.project.cand --builddir=dist-cand --only-download ledger-cbor-harness
-  # Upstream test suites (#53, build.sh): download their dependencies now, while
-  # there is network. Download only: setup never compiles candidate code.
+  # Upstream test suites (#53, build.sh): build everything the suites in
+  # upstream-tests.txt depend on now, while there is network: their Hackage,
+  # CHaP and source-repository dependencies, and the ledger libraries and
+  # testlibs, from baseline/ (judge code, synced here: never candidate/).
+  # Downloading them is not enough. The CI build has no network and runs cabal
+  # --offline, and cabal-install 3.16 refuses any --offline plan that still has
+  # a repository package to build, even with its tarball in the cache
+  # (ProjectBuilding.rebuildTargets, packagesToDownload; Preflight 43111331287:
+  # "refusing to download" for all 74 test-only dependencies). With these built,
+  # build.sh's plan only has the local packages the candidate changed and the
+  # test suites themselves.
   if [ "${CB_UPSTREAM_TESTS:-0}" = 1 ]; then
+    grep -v '^#' "$OLDPWD/packages.txt" | while read -r name path; do
+      [ -n "$name" ] || continue
+      rsync -a -c --delete "$OLDPWD/baseline/$name/src/" "cand/$name/src/"
+    done
     # shellcheck disable=SC2046
-    cabal build -v1 --project-file=cabal.project.test --builddir=dist-cand-test --enable-tests --only-download \
+    cabal build -v1 --project-file=cabal.project.test --builddir=dist-cand-test --enable-tests --only-dependencies \
       $(grep -v '^#' "$OLDPWD/upstream-tests.txt" | awk 'NF { print $1 ":test:tests" }')
   fi
 )
