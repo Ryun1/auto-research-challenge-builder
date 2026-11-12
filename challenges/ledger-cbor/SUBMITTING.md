@@ -97,7 +97,7 @@ The **Comment** workflow then posts a new comment on the PR:
 | status `rejected`, reason `build: ...` | it didn't compile (or the build ran past 60 min) |
 | status `rejected`, reason `verify failed` | some output, re-encoding, accept/reject result or `rnf` result differs from the reference |
 | status `rejected`, reason `wall-time guard: regressed` | the paired wall-time run put your build below 0.92× the reference's speed |
-| status `infra_failed` | setup failed or wall time was too noisy to judge. Not your change: push again or ask the maintainer to re-run |
+| status `infra_failed` | setup failed or wall time was too noisy to judge in three attempts. Not your change: push again or ask the maintainer to re-run |
 | "No score was produced" | the score job died before writing a result. See the run |
 
 The comment gives the status, the speedup and the wall-time guard only. For
@@ -118,7 +118,8 @@ runs that produced no score are not recorded.
 ## 5. After the merge
 
 The maintainer merges PRs one at a time. The merge starts the **Promote**
-workflow on `main`, which takes hours. It makes two independent runs, each on
+workflow on `main`, which takes about 20 minutes with warm caches (longer
+after a cold rebuild). It makes two independent runs, each on
 its own fresh pool and seed. Each run scores your tree and the current
 record's tree on the same sample, and it also builds and runs the upstream
 test suites of five packages (binary, core, shelley, allegra, mary; see

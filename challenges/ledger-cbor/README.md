@@ -38,7 +38,8 @@ value may hold no more function closures than the reference's.
 run (start-up plus reading the input). The timed pass is `harness decode`:
 `decodeFullAnnotator` at PV 11 into `MempoolTx ConwayEra`, then `rnf`. The RTS timer is off (`-V0`), so counts are deterministic: `speedup = reference / candidate`. A paired wall-time run guards
 against regressions (as in `kits/rust`). It rejects a candidate whose wall-time speedup is below 0.92
-(`max_dispersion`), and a run too noisy to judge is `infra_failed`. In CI
+(`max_dispersion`). A measurement too noisy to judge is repeated, up to three
+times; if none is stable the run is `infra_failed`. In CI
 (`CB_POOL=fresh`) the txs come from a pool of recent mainnet blocks fetched
 for that run. `corpus/pool.hex.gz` is only for local runs. To count, a change
 must beat the record by 1% (`min_improvement_bips = 100`).
