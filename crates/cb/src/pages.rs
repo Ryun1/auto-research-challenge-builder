@@ -20,6 +20,9 @@ use std::path::Path;
 pub const SITE_SCHEMA_VERSION: u32 = 1;
 const STYLE: &str = include_str!("../assets/site/style.css");
 const SCRIPT: &str = include_str!("../assets/site/app.js");
+/// Instrument Sans (variable weight and width), SIL Open Font License 1.1.
+/// Served from the site itself: the page loads nothing from other origins.
+const FONT: &[u8] = include_bytes!("../assets/site/instrument-sans.woff2");
 /// Attempt reasons can quote verifier output: keep them short.
 const MAX_REASON: usize = 240;
 const MAX_SUMMARY: usize = 900;
@@ -345,7 +348,8 @@ pub fn index_html(data: &Value) -> String {
         "<!doctype html>\n<html lang=\"en\"><head><meta charset=\"utf-8\">\
          <meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">\
          <meta name=\"color-scheme\" content=\"light dark\"><link rel=\"icon\" href=\"data:,\">\
-         <title>Challenge status</title>\
+         <title>Auto-research challenges</title>\
+         <link rel=\"preload\" href=\"assets/instrument-sans.woff2\" as=\"font\" type=\"font/woff2\" crossorigin>\
          <link rel=\"stylesheet\" href=\"assets/style.css\"></head><body>\
          <div id=\"app\"><noscript><p class=\"noscript\">This page needs JavaScript. \
          The data is in <a href=\"challenges.json\">challenges.json</a>.</p></noscript></div>\
@@ -386,6 +390,8 @@ pub fn write(root: &Path, out: &Path, feeds: &[String], generated_at: &str) -> R
     std::fs::create_dir_all(out.join("assets")).map_err(|e| e.to_string())?;
     w("assets/style.css", STYLE)?;
     w("assets/app.js", SCRIPT)?;
+    let font = out.join("assets/instrument-sans.woff2");
+    std::fs::write(&font, FONT).map_err(|e| format!("{}: {e}", font.display()))?;
     w(
         "challenges.json",
         &(serde_json::to_string_pretty(&data).unwrap() + "\n"),
