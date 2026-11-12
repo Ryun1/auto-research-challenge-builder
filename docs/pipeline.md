@@ -106,3 +106,28 @@ The record only moves through `results.jsonl` on `main`, so a score comment
 is a claim to check against the Submission run, not proof. A PR whose merge
 commit message contains `[skip ci]` or `[skip actions]` would not be promoted:
 check the title before merging.
+
+## Actions minutes
+
+The repo is private, so every run is billed (GitHub Pro includes 3,000
+minutes a month). Measured on 2026-11-12 for `ledger-cbor`: a push to a
+submission PR costs about 13 minutes (score 10, gate, Comment and Site about
+1 each), a merge about 50 (two promotion runs of about 20, CI 7, Site), a Warm
+rebuild about 40.
+
+- **Daily cap:** the gate job refuses an account's Submission runs beyond
+  `DAILY_CAP` (10) in a rolling 24 hours (`.github/scripts/daily-cap.sh`,
+  called from `submission.yml`). Every run counts, cancelled and refused ones
+  included, and nobody is exempt. The refusal is a gate refusal, so the PR gets
+  a comment and nothing is built.
+- **No CI on candidate-only PRs** (`paths-ignore` in `ci.yml`): CI tests
+  nothing of a submission.
+- **Site** publishes after Comment, not after Submission as well.
+
+Not covered by the cap: re-running an old run from the Actions tab (a new
+attempt of the same run, not a new run), a collaborator dispatching Preflight,
+Warm or Promote by hand, and a workflow pushed to a collaborator's own branch.
+The account budget and its alerts (Settings > Billing and licensing > Budgets
+and alerts) are the backstop for those. When the minutes run out, GitHub
+refuses to start jobs: a job that fails in seconds with no steps has a billing
+annotation on its check run.

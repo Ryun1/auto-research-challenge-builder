@@ -2,6 +2,11 @@ name: CI
 
 on:
   pull_request:
+    # A PR that changes only candidate files gets no CI run: CI tests nothing of
+    # a submission (Submission scores it) and every run is billed. main's ruleset
+    # has no required status checks; if CI ever becomes one, drop this filter,
+    # or candidate-only PRs can never merge.
+    paths-ignore: ["challenges/*/candidate/**"]
   push:
     branches: [main]
 

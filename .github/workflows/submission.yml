@@ -18,6 +18,9 @@ on:
 permissions:
   contents: read
 
+env:
+  DAILY_CAP: 10 # Submission runs per actor per rolling 24 hours (.github/scripts/daily-cap.sh)
+
 concurrency:
   group: submission-${{ github.event.pull_request.number }}
   cancel-in-progress: true
@@ -27,6 +30,11 @@ jobs:
     if: github.event.pull_request.base.ref == 'main' # as the trigger; score needs this job
     runs-on: ubuntu-24.04
     timeout-minutes: 15
+    # actions: read is for the daily cap's run count. This job never runs
+    # submission code; score keeps the workflow default (contents: read).
+    permissions:
+      contents: read
+      actions: read
     outputs:
       ok: ${{ steps.gate.outputs.ok }}
       slug: ${{ steps.gate.outputs.slug }}
@@ -50,9 +58,22 @@ jobs:
           PR: ${{ github.event.pull_request.number }}
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
           TOKEN: ${{ github.token }}
-      - run: rustup toolchain install
-      - run: cargo build --locked --release
+      # Over the cap, this writes gate.json as a refusal: the steps below are
+      # skipped, the outputs stay empty (no score job) and Comment posts it.
+      - id: cap
+        name: Daily cap per actor (every run is billed)
+        run: .github/scripts/daily-cap.sh >> "$GITHUB_OUTPUT"
+        env:
+          REPO: ${{ github.repository }}
+          ACTOR: ${{ github.actor }}
+          CAP: ${{ env.DAILY_CAP }}
+          GH_TOKEN: ${{ github.token }}
+      - if: steps.cap.outputs.capped != 'true'
+        run: rustup toolchain install
+      - if: steps.cap.outputs.capped != 'true'
+        run: cargo build --locked --release
       - id: gate
+        if: steps.cap.outputs.capped != 'true'
         run: |
           set +e
           ./target/release/cb gate --base "$BASE_SHA" --head "$HEAD_SHA" --out submission --json gate.json

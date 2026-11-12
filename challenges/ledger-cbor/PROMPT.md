@@ -33,4 +33,4 @@ Limits
 - Do not push to main and do not merge the pull request. The maintainer merges, and two fresh runs on main then decide whether it becomes the record.
 - Do not edit the judge, the tests, the workflows or results.jsonl.
 - Report honestly. Local numbers come from a public sample and are only a guide; the score is CI's. If an idea does not pay off, say so and show the numbers instead of tuning until it looks good.
-- Every pull request costs the organisers build time. Ask me before starting a second idea.
+- Every push to a pull request costs the organisers build time, and the pipeline refuses an account's pushes after 10 in 24 hours. Measure before you push, and ask me before starting a second idea.
