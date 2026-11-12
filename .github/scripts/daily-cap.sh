@@ -15,6 +15,7 @@ ids=$(gh api --paginate \
   "repos/$REPO/actions/workflows/submission.yml/runs?actor=$actor&created=>=$since&per_page=100" \
   --jq '.workflow_runs[].id')
 n=$(grep -c . <<<"$ids" || true)
+echo "Submission runs by $ACTOR since $since: $n (cap $CAP)" >&2 # stdout is the step's output file
 if [ "$n" -gt "$CAP" ]; then
   jq -n --arg a "$ACTOR" --arg n "$n" --arg cap "$CAP" '{ok: false, errors: [
     "daily cap: \($a) started \($n) Submission runs in the last 24 hours (limit \($cap)). Every run is billed; push again tomorrow or ask the maintainer."]}' > gate.json

@@ -28,7 +28,7 @@ CASES=(
   "gitlink|refused|gitlink"
   "verifier-edit|refused|judge.py: outside the editable paths"
   "setup-edit|refused|setup.sh: outside the editable paths"
-  "size-cap|refused|> max_bytes"
+  "size-cap|refused|editable tree is"
   "new-file|refused|new file (the file set is frozen)"
   "th-extension|refused|extension TemplateHaskell is not allowed"
   "unsafe-import|refused|import of System.IO.Unsafe"
@@ -112,6 +112,13 @@ verdict_comment() {
     --jq '[.comments[].body | select(contains("cb:score"))] | last // ""' 2>/dev/null || true
 }
 
+# The verdict AND the reason must match: a crashed gate is not a refusal.
+# cb comment neutralises the reasons (">" and "_" become spaces), so the
+# substrings in CASES are ones that survive it.
+refusal_matches() {
+  grep -qF "Refused by the gate" <<<"$1" && grep -qF "$2" <<<"$1" && ! grep -q "failed before deciding" <<<"$1"
+}
+
 fail=0
 for c in "${CASES[@]}"; do
   IFS='|' read -r name expect why <<<"$c"
@@ -127,9 +134,10 @@ for c in "${CASES[@]}"; do
   ok=0 note=""
   if $local_mode; then
     ./target/release/cb gate --base "$base" --head HEAD --out "$tmp/sub-$name" --json "$tmp/gate-$name.json" >/dev/null 2>&1 || true
-    if [ "$(jq -r .ok "$tmp/gate-$name.json")" = false ] \
-      && jq -e --arg why "$why" 'any(.errors[]; contains($why))' "$tmp/gate-$name.json" >/dev/null; then ok=1; fi
-    note=$(jq -r --arg why "$why" '[.errors[] | select(contains($why))][0] // .errors[0] // "gate ok: not refused"' "$tmp/gate-$name.json" | cut -c1-110)
+    # Matched on the comment the PR would get, exactly as a live run matches.
+    body=$(./target/release/cb comment --gate "$tmp/gate-$name.json")
+    if [ "$(jq -r .ok "$tmp/gate-$name.json")" = false ] && refusal_matches "$body" "$why"; then ok=1; fi
+    note=$( (grep -F -- "$why" <<<"$body" || grep -E '^- ' <<<"$body" || echo "gate ok: not refused") | head -1 | cut -c1-110)
   elif [ "$expect" = ignored ]; then
     basebranch="malicious/base-$(date +%s)"
     git push -q origin "$base:refs/heads/$basebranch" "$branch"
@@ -153,9 +161,7 @@ for c in "${CASES[@]}"; do
       [ -n "$body" ] && break
       sleep 10
     done
-    # The verdict AND the reason must match: a crashed gate is not a refusal.
-    if grep -qF "Refused by the gate" <<<"$body" && grep -qF "$why" <<<"$body" \
-      && ! grep -q "failed before deciding" <<<"$body"; then ok=1; fi
+    if refusal_matches "$body" "$why"; then ok=1; fi
     note=$(grep -m1 -E '^- ' <<<"$body" | cut -c1-110 || true)
     [ -n "$body" ] || note="no verdict comment in 15 min"
   fi

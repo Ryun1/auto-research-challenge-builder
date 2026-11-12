@@ -27,7 +27,7 @@ concurrency:
 
 jobs:
   gate:
-    if: github.event.pull_request.base.ref == 'main' # as the trigger; score needs this job
+    if: github.event.pull_request.base.ref == 'main' # as the trigger (ignores case: see the first step)
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     # actions: read is for the daily cap's run count. This job never runs
@@ -41,6 +41,12 @@ jobs:
       runner: ${{ steps.gate.outputs.runner }}
       kit: ${{ steps.gate.outputs.kit }}
     steps:
+      # Expressions compare strings ignoring case, so the job condition would
+      # also accept a branch called Main. bash does not.
+      - name: Base branch is main, exactly
+        run: test "$BASE_REF" = main
+        env:
+          BASE_REF: ${{ github.event.pull_request.base.ref }}
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ github.event.pull_request.base.sha }}
@@ -52,10 +58,17 @@ jobs:
           # runs submission code.
           auth=$(printf 'x-access-token:%s' "$TOKEN" | base64 -w0)
           git -c "http.https://github.com/.extraheader=AUTHORIZATION: basic $auth" \
-            fetch --no-tags "https://github.com/${{ github.repository }}" "+refs/pull/${PR}/head:refs/cb/head"
+            fetch --no-tags "https://github.com/${{ github.repository }}" \
+            "+refs/pull/${PR}/head:refs/cb/head" "+refs/heads/main:refs/cb/main"
           test "$(git rev-parse refs/cb/head)" = "$HEAD_SHA"
+          # The checkout above is the judge for both jobs (score runs only if
+          # this job passes): it must be a commit of main, whatever the event
+          # says the base is. Nothing from the checkout has run yet.
+          git merge-base --is-ancestor "$BASE_SHA" refs/cb/main \
+            || { echo "::error::the PR's base commit $BASE_SHA is not on main"; exit 1; }
         env:
           PR: ${{ github.event.pull_request.number }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
           TOKEN: ${{ github.token }}
       # Over the cap, this writes gate.json as a refusal: the steps below are

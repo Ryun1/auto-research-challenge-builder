@@ -92,8 +92,10 @@ protected by a ruleset (needs GitHub Pro on a private repo). Its definition is
 - **PRs into main only:** Submission and Comment act only on PRs whose base
   is `main`. The jobs check out `pull_request.base.sha` and build `cb` from
   it, so a PR into a collaborator's own branch would run that branch's code as
-  the judge, and Comment would record what it uploaded. Check:
-  `scripts/malicious-prs.sh non-main-base`.
+  the judge, and Comment would record what it uploaded. The gate job also
+  compares the base branch name in bash (expressions ignore case) and refuses
+  a base commit that is not on `main`, before anything from the checkout runs.
+  Check: `scripts/malicious-prs.sh non-main-base`.
 - **Commit messages:** a deploy-key push fires push workflows, unlike a
   workflow-token push, so the results commits end in `[skip actions]`.
 - **Audit:** `scripts/audit-main.sh` reads GitHub's push log for `main` and
@@ -124,10 +126,18 @@ rebuild about 40.
   nothing of a submission.
 - **Site** publishes after Comment, not after Submission as well.
 
-Not covered by the cap: re-running an old run from the Actions tab (a new
-attempt of the same run, not a new run), a collaborator dispatching Preflight,
-Warm or Promote by hand, and a workflow pushed to a collaborator's own branch.
-The account budget and its alerts (Settings > Billing and licensing > Budgets
+The cap limits scored runs, not minutes. Not covered:
+
+- a capped push still bills its gate job, Comment and Site, about 3 minutes,
+  with no limit on how many;
+- CI still runs (about 7 minutes) for every push to a PR that touches a
+  non-candidate file, into any base branch;
+- re-running an old run from the Actions tab (a new attempt of the same run,
+  not a new run);
+- a collaborator dispatching Preflight, Warm, Promote, Calibrate or Site by
+  hand, or pushing a workflow to their own branch.
+
+Only the account budget bounds those. The budget and its alerts (Settings > Billing and licensing > Budgets
 and alerts) are the backstop for those. When the minutes run out, GitHub
 refuses to start jobs: a job that fails in seconds with no steps has a billing
 annotation on its check run.
