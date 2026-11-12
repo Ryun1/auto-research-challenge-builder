@@ -373,6 +373,66 @@
   }
 
   // ---------- sections ----------
+  // Copies text; done(true) on success. The async clipboard API needs a secure
+  // context and permission, so a hidden textarea + execCommand is the fallback.
+  function copyText(text, done) {
+    function fallback() {
+      var ta = document.createElement("textarea");
+      ta.value = text;
+      ta.setAttribute("readonly", "");
+      ta.setAttribute("aria-hidden", "true");
+      ta.style.cssText = "position:fixed;top:-1000px;left:0;opacity:0";
+      document.body.appendChild(ta);
+      ta.select();
+      var ok = false;
+      try { ok = document.execCommand("copy"); } catch (e) { ok = false; }
+      document.body.removeChild(ta);
+      done(ok);
+    }
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(text).then(function () { done(true); }, fallback);
+    } else fallback();
+  }
+
+  // The participant prompt (PROMPT.md): pasted into a coding agent to start on
+  // the challenge. Copy is the main action; the text itself is one click away.
+  function promptBox(c) {
+    var box = el("div", "prompt");
+    add(box, el("h3", null, "Start with your coding agent"),
+      el("p", "prompt-lead", "Paste this prompt into Claude Code, Codex or another coding agent. It gives the agent the goal, the rules and how to submit."));
+    var row = el("div", "prompt-actions");
+    var btn = el("button", "copy", "Copy prompt");
+    btn.setAttribute("type", "button");
+    var status = el("span", "copy-status");
+    status.setAttribute("role", "status");
+    var details = el("details", "prompt-text");
+    var pre = el("pre", null, c.prompt);
+    pre.setAttribute("tabindex", "0");
+    add(details, el("summary", null, "Read the prompt"), pre);
+    var timer = null;
+    btn.addEventListener("click", function () {
+      copyText(c.prompt, function (ok) {
+        clearTimeout(timer);
+        if (ok) {
+          btn.textContent = "Copied";
+          status.textContent = "Prompt copied. Paste it into your agent.";
+          timer = setTimeout(function () { btn.textContent = "Copy prompt"; status.textContent = ""; }, 4000);
+        } else {
+          // Leave the text selected so a manual copy is one keystroke.
+          details.open = true;
+          var range = document.createRange();
+          range.selectNodeContents(pre);
+          var sel = window.getSelection();
+          sel.removeAllRanges();
+          sel.addRange(range);
+          status.textContent = "Copying is blocked here. The prompt is selected below: copy it with Ctrl+C or Cmd+C.";
+        }
+      });
+    });
+    add(row, btn, status);
+    return add(box, row, details);
+  }
+
   function enter(c) {
     var s = el("section", "panel enter");
     s.setAttribute("id", "enter");
@@ -387,6 +447,7 @@
     });
     add(lead, ". CI scores it and comments the result on the PR.");
     add(s, lead);
+    if (str(c.prompt) && (c.state === "open" || c.state === "pending")) add(s, promptBox(c));
     var steps = c.submit_steps || [];
     if (steps.length) {
       var ol = el("ol", "steps");

@@ -3,7 +3,8 @@
 //!
 //! Public although the repo is private, so it carries only what the feeds
 //! already expose (results.jsonl), `challenge.toml` metadata, a short README
-//! excerpt, the steps from SUBMITTING.md and a candidate's title. Nothing else
+//! excerpt, the steps from SUBMITTING.md, the participant prompt (PROMPT.md,
+//! written to be published) and a candidate's title. Nothing else
 //! from `candidates/` is read. The page renders every string with
 //! `textContent`; the data is embedded as JSON with `<`, `>` and `&` escaped,
 //! so no file content can close the script element.
@@ -26,6 +27,7 @@ const FONT: &[u8] = include_bytes!("../assets/site/instrument-sans.woff2");
 /// Attempt reasons can quote verifier output: keep them short.
 const MAX_REASON: usize = 240;
 const MAX_SUMMARY: usize = 900;
+const MAX_PROMPT: usize = 8000;
 
 fn str_of(v: &Value) -> &str {
     v.as_str().unwrap_or("")
@@ -201,6 +203,16 @@ fn submit_steps(dir: &Path) -> Vec<String> {
     steps.iter().map(|s| clip(&plain(s), 400)).take(8).collect()
 }
 
+/// `PROMPT.md`: the text a participant pastes into their coding agent to start
+/// on the challenge. Its author writes it for publication, and it goes out as
+/// written: stripping Markdown or redacting would mangle the commands in it.
+fn prompt(dir: &Path) -> Option<String> {
+    let text = std::fs::read_to_string(dir.join("PROMPT.md")).ok()?;
+    let text = text.replace("\r\n", "\n");
+    let text = text.trim();
+    (!text.is_empty()).then(|| clip(text, MAX_PROMPT))
+}
+
 /// `candidates/<slug>.toml`'s `[candidate] title`, and nothing else from it.
 fn candidate_title(candidates: &Path, slug: &str) -> Option<String> {
     let text = std::fs::read_to_string(candidates.join(format!("{slug}.toml"))).ok()?;
@@ -318,6 +330,7 @@ pub fn challenge(
         "board": board,
         "attempts": attempts,
         "submit_steps": submit_steps(&dir),
+        "prompt": prompt(&dir),
         "feed": has_feed.then(|| format!("feeds/{slug}.json")),
     }))
 }
@@ -506,5 +519,23 @@ mod tests {
                 "Read the result"
             ]
         );
+    }
+
+    #[test]
+    fn the_participant_prompt_is_published_as_written() {
+        let dir = crate::paths::scratch("pages-prompt");
+        std::fs::create_dir_all(&dir).unwrap();
+        assert_eq!(prompt(&dir), None);
+        std::fs::write(dir.join("PROMPT.md"), " \n\n").unwrap();
+        assert_eq!(prompt(&dir), None);
+        // Commands survive: no Markdown stripping, no email redaction of the clone URL.
+        let text = "Read `README.md`.\r\n\r\n  git clone git@github.com:o/r.git\r\n- *one* idea\n";
+        std::fs::write(dir.join("PROMPT.md"), text).unwrap();
+        assert_eq!(
+            prompt(&dir).as_deref(),
+            Some("Read `README.md`.\n\n  git clone git@github.com:o/r.git\n- *one* idea")
+        );
+        std::fs::write(dir.join("PROMPT.md"), "x".repeat(MAX_PROMPT + 50)).unwrap();
+        assert_eq!(prompt(&dir).unwrap().chars().count(), MAX_PROMPT + 1);
     }
 }
