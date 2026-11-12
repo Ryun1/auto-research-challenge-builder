@@ -22,9 +22,9 @@ Don't open PRs from a fork: the workflow that posts results can't link a fork's
 run back to the PR, so you would get no comment. Target `main`. The workflows
 and the judge come from the PR's base branch.
 
-You have write access because GitHub needs it to run the PR workflows. Don't
-push to `main` and don't merge your own PR (nothing technically stops you).
-The maintainer merges.
+You have write access because GitHub needs it to run the PR workflows. `main`
+is protected: it only changes through a PR the maintainer has approved, and
+the maintainer merges.
 
 ## 2. What you may change
 

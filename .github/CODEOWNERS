@@ -1,5 +1,8 @@
-# Judge files need a maintainer review (PLAN.md §4). Enforced once branch
-# protection requires code-owner review on main.
+# Every PR to main needs the maintainer's review: the ruleset on main
+# (.github/rulesets/main.json) requires a code-owner approval, so another
+# collaborator's approval is not enough to merge. The judge paths are listed
+# as well, so they stay owned if the catch-all is ever narrowed (PLAN.md §4).
+*                           @Ryun1
 .github/                    @Ryun1
 crates/                     @Ryun1
 kits/                       @Ryun1

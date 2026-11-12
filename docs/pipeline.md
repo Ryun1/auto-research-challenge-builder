@@ -63,9 +63,41 @@ Concurrency, and what is left:
    pass on the runner (Preflight workflow).
 2. Dispatch **Promote** with `slug` and `baseline=true`. This records the
    baseline, which is the record every attempt must beat.
-3. Add ecosystem teams as collaborators. Branch protection on `main` should
-   require code-owner review (`.github/CODEOWNERS`) and allow the workflow
-   token to push `results.jsonl` (or use a bot token).
+3. Add ecosystem teams as collaborators. `main` is protected by the ruleset
+   in `.github/rulesets/main.json` (see "Protection of main" below).
 
 Before any ecosystem team gets PR access: a human security review
 (tracked as its own issue).
+
+## Protection of main
+
+Collaborators on a personal repo always get write access, so `main` is
+protected by a ruleset (needs GitHub Pro on a private repo). Its definition is
+`.github/rulesets/main.json`; the live copy is under Settings > Rules.
+
+- **Rules:** no deletion, no force push, and changes only through a PR with an
+  approving review from a code owner. `.github/CODEOWNERS` makes the
+  maintainer the owner of every path, so a collaborator cannot merge on
+  another collaborator's approval. A push after the approval dismisses it.
+- **Bypass:** the repository admin (the maintainer cannot approve their own
+  PRs, so they merge with "bypass rules" or `gh pr merge --admin`) and deploy
+  keys.
+- **Results commits:** the workflow token cannot bypass a ruleset, so Comment
+  and Promote push `results.jsonl` (and Promote's revert) with a write deploy
+  key. It is the `RESULTS_DEPLOY_KEY` secret of the `results` environment,
+  which only runs on `main` may use. The site key (`SITE_DEPLOY_KEY`,
+  environment `site`) is scoped the same way. A repository-level secret would
+  be readable by a workflow pushed to any branch. `scripts/setup-deploy-keys.sh`
+  creates or rotates both keys.
+- **Commit messages:** a deploy-key push fires push workflows, unlike a
+  workflow-token push, so the results commits end in `[skip actions]`.
+- **Audit:** `scripts/audit-main.sh` reads GitHub's push log for `main` and
+  flags any update that is neither a PR merged by the owner nor a results
+  commit made inside a Comment or Promote run.
+
+Not covered: a collaborator's own branch workflow still gets a workflow token
+that can write to other branches and post PR comments as `github-actions[bot]`.
+The record only moves through `results.jsonl` on `main`, so a score comment
+is a claim to check against the Submission run, not proof. A PR whose merge
+commit message contains `[skip ci]` or `[skip actions]` would not be promoted:
+check the title before merging.
