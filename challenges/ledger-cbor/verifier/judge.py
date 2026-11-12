@@ -9,6 +9,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 REF, CAND = ROOT / ".bin/reference", ROOT / ".bin/candidate"
 VALID_N, MUTANT_N, SCORE_N, WALL_REPS = 600, 300, 800, 5
+WALL_ATTEMPTS = 3  # the paired wall-time measurement is repeated only while it is unstable
 
 
 def pool_path():
@@ -142,26 +143,36 @@ def score(seed):
                              capture_output=True, text=True, timeout=900)
         return float(out.stdout.split()[-1])
 
+    def measure():
+        all_b, all_c, ratios = [], [], []
+        for k in range(blocks):  # mirrored BCCB / CBBC, as kits/rust
+            order = [False, True, True, False] if k % 4 in (0, 3) else [True, False, False, True]
+            b, c = [], []
+            for cand in order:
+                (c if cand else b).append(time(cand))
+            ratios.append(statistics.median(c) / statistics.median(b))
+            all_b += b
+            all_c += c
+        g = statistics.geometric_mean(ratios)
+        cross = max(abs(r / g - 1) for r in ratios)
+        mad_c, mad_b = rel_mad(all_c), rel_mad(all_b)
+        return mad_c <= max_disp and mad_b <= max_disp and cross <= max_disp, 1 / g, mad_c, mad_b, cross
+
     time(True), time(False)  # warm up
-    all_b, all_c, ratios = [], [], []
-    for k in range(blocks):  # mirrored BCCB / CBBC, as kits/rust
-        order = [False, True, True, False] if k % 4 in (0, 3) else [True, False, False, True]
-        b, c = [], []
-        for cand in order:
-            (c if cand else b).append(time(cand))
-        ratios.append(statistics.median(c) / statistics.median(b))
-        all_b += b
-        all_c += c
-    g = statistics.geometric_mean(ratios)
-    cross = max(abs(r / g - 1) for r in ratios)
-    wall = 1 / g
-    stable = rel_mad(all_c) <= max_disp and rel_mad(all_b) <= max_disp and cross <= max_disp
+    # A burst of load on the shared runner spoils one measurement (Promote
+    # 43135597462: cross-block 0.22 on one of the two runs, 0.02 on the other).
+    # Only an unstable measurement is repeated. The first stable one decides,
+    # pass or regressed, so a regression can't be retried away.
+    for attempts in range(1, WALL_ATTEMPTS + 1):
+        stable, wall, mad_c, mad_b, cross = measure()
+        if stable:
+            break
     guard = "unstable" if not stable else "regressed" if wall < 1 - max_disp else "pass"
     return {"metrics": {
         "speedup": ir / ic, "instructions": ic, "reference_instructions": ir,
-        "wall_speedup": round(wall, 4), "wall_rel_mad_candidate": round(rel_mad(all_c), 4),
-        "wall_rel_mad_reference": round(rel_mad(all_b), 4), "wall_cross_block": round(cross, 4),
-        "guard": guard, "n": SCORE_N}}
+        "wall_speedup": round(wall, 4), "wall_rel_mad_candidate": round(mad_c, 4),
+        "wall_rel_mad_reference": round(mad_b, 4), "wall_cross_block": round(cross, 4),
+        "wall_attempts": attempts, "guard": guard, "n": SCORE_N}}
 
 
 if __name__ == "__main__":
