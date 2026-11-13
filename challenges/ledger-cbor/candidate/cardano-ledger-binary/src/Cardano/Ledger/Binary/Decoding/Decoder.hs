@@ -18,6 +18,7 @@ module Cardano.Ledger.Binary.Decoding.Decoder (
   enforceDecoderVersion,
   getOriginalBytes,
   originalBytesExpectedFailureMessage,
+  decodeDirectFastPath,
   DecoderError (..),
   C.ByteOffset,
   ByteArray (..),
@@ -182,7 +183,7 @@ import Cardano.Ledger.Binary.Plain (
   showDecoderError,
   toCborError,
  )
-import qualified Cardano.Ledger.Binary.Plain as Plain (assertTag, decodeBytes, decodeTagMaybe)
+import qualified Cardano.Ledger.Binary.Plain as Plain (decodeBytes)
 import Cardano.Ledger.Binary.Version (Version, mkVersion32, natVersion)
 import Cardano.Slotting.Slot (WithOrigin, withOriginFromMaybe)
 import Codec.CBOR.ByteArray (ByteArray (..))
@@ -260,28 +261,33 @@ import qualified Codec.CBOR.Decoding as C (
   peekByteOffset,
   peekTokenType,
  )
+import Codec.CBOR.Read as Read (DeserialiseFailure, IDecode (..), deserialiseIncremental)
 import qualified Codec.CBOR.Term as C (Term (..), decodeTerm)
 import Control.Monad
 import Control.Monad.ST (ST)
 import Control.Monad.Trans (MonadTrans (..))
 import Control.Monad.Trans.Identity (IdentityT (runIdentityT))
+import Data.Bits (finiteBitSize, shiftL, shiftR, (.&.), (.|.))
 import Data.ByteString (ByteString)
 import qualified Data.ByteString as BS
 import qualified Data.ByteString.Builder as BSB
 import qualified Data.ByteString.Lazy as BSL
 import qualified Data.ByteString.Lazy as LBS
+import Data.ByteString.Short (ShortByteString (SBS), toShort)
 import Data.Functor.Compose (Compose (..))
 import Data.Int (Int16, Int32, Int64, Int8)
 import qualified Data.IntMap as IntMap
 import Data.List (intercalate)
 import qualified Data.List.NonEmpty as NE (NonEmpty, nonEmpty)
 import qualified Data.Map.Strict as Map
+import qualified Data.Primitive.ByteArray as Prim
 import Data.Maybe.Strict (StrictMaybe (..), maybeToStrictMaybe)
 import Data.Ratio ((%))
 import qualified Data.Sequence as Seq
 import qualified Data.Sequence.Strict as SSeq
 import qualified Data.Set as Set
 import qualified Data.Text as Text
+import qualified Data.Text.Encoding as Text (decodeUtf8')
 import qualified Data.Text.Lazy as LT
 import qualified Data.Text.Lazy.Builder as B
 import Data.Time.Calendar.OrdinalDate (fromOrdinalDate)
@@ -297,46 +303,151 @@ import Prelude hiding (decodeFloat)
 -- Versioned Decoder
 --------------------------------------------------------------------------------
 
-newtype Decoder s a = Decoder
+-- | A versioned decoder, held in two forms that decode the same thing.
+--
+-- * `runDecoder` is the decoder proper: a cborg `C.Decoder` that is given the
+--   original bytes and the version. It is the specification, and the only form
+--   that ever reports a failure.
+--
+-- * `runDirect` reads the same value straight out of one strict input chunk at
+--   a byte offset. It may only answer `DOk` where `runDecoder`, run over the
+--   same bytes from the same position, succeeds with an equal value after
+--   consuming the same number of bytes. Whenever it cannot promise that (an
+--   encoding it does not handle, a truncated token, any failure) it answers
+--   `DBail`, and `decodeDirectFastPath`'s caller throws the attempt away and runs
+--   `runDecoder` over the whole input instead. So accept/reject and every error
+--   are always decided by the cborg path.
+data Decoder s a = Decoder
   { runDecoder :: Maybe BSL.ByteString -> Version -> C.Decoder s a
+  , runDirect :: Version -> ByteString -> Int -> ST s (DRes a)
   }
+
+-- | Outcome of a direct decoder: the offset after the value and the value, or
+-- no answer.
+data DRes a
+  = DOk !Int a
+  | DBail
 
 -- The mapped function is applied as soon as the argument has been decoded,
 -- instead of leaving one updatable thunk per `fmap`/`<*>` for `rnf` (or a
 -- strict constructor field) to enter later. `<$` keeps its default, lazy
 -- meaning.
 instance Functor (Decoder s) where
-  fmap f d = Decoder (\bsl v -> runDecoder d bsl v >>= \x -> pure $! f x)
+  fmap f d =
+    Decoder
+      (\bsl v -> runDecoder d bsl v >>= \x -> pure $! f x)
+      ( \v bs off ->
+          runDirect d v bs off >>= \case
+            DOk off' x -> let !y = f x in pure (DOk off' y)
+            DBail -> pure DBail
+      )
   {-# INLINE fmap #-}
-  x <$ d = Decoder (\bsl v -> x <$ runDecoder d bsl v)
+  x <$ d =
+    Decoder
+      (\bsl v -> x <$ runDecoder d bsl v)
+      ( \v bs off ->
+          runDirect d v bs off >>= \case
+            DOk off' _ -> pure (DOk off' x)
+            DBail -> pure DBail
+      )
   {-# INLINE (<$) #-}
 
 instance Applicative (Decoder s) where
-  pure x = Decoder (\_ _ -> pure x)
+  pure x = Decoder (\_ _ -> pure x) (\_ _ off -> pure (DOk off x))
   {-# INLINE pure #-}
-  Decoder f <*> Decoder g = Decoder $ \bsl v -> do
-    h <- f bsl v
-    x <- g bsl v
-    pure $! h x
+  df <*> dx =
+    Decoder
+      ( \bsl v -> do
+          h <- runDecoder df bsl v
+          x <- runDecoder dx bsl v
+          pure $! h x
+      )
+      ( \v bs off ->
+          runDirect df v bs off >>= \case
+            DBail -> pure DBail
+            DOk off1 h ->
+              runDirect dx v bs off1 >>= \case
+                DBail -> pure DBail
+                DOk off2 x -> let !y = h x in pure (DOk off2 y)
+      )
   {-# INLINE (<*>) #-}
-  Decoder f *> Decoder g = Decoder $ \bsl v -> f bsl v *> g bsl v
+  da *> db =
+    Decoder
+      (\bsl v -> runDecoder da bsl v *> runDecoder db bsl v)
+      ( \v bs off ->
+          runDirect da v bs off >>= \case
+            DBail -> pure DBail
+            DOk off1 _ -> runDirect db v bs off1
+      )
   {-# INLINE (*>) #-}
 
 instance Monad (Decoder s) where
-  Decoder f >>= g = Decoder $ \bsl v -> do
-    x <- f bsl v
-    runDecoder (g x) bsl v
+  d >>= g =
+    Decoder
+      ( \bsl v -> do
+          x <- runDecoder d bsl v
+          runDecoder (g x) bsl v
+      )
+      ( \v bs off ->
+          runDirect d v bs off >>= \case
+            DBail -> pure DBail
+            DOk off1 x -> runDirect (g x) v bs off1
+      )
   {-# INLINE (>>=) #-}
 
 instance MonadFail (Decoder s) where
-  fail msg = fromPlainDecoder $ fail msg
+  fail msg = Decoder (\_ _ -> fail msg) (\_ _ _ -> pure DBail)
   {-# INLINE fail #-}
 
 -- | Promote a regular `C.Decoder` to a versioned one. Which means it will work for all
 -- versions.
 fromPlainDecoder :: C.Decoder s a -> Decoder s a
-fromPlainDecoder d = Decoder (\_ _ -> d)
+fromPlainDecoder d = Decoder (\_ _ -> d) (\_ bs off -> bridgePlainDecoder d bs off)
 {-# INLINE fromPlainDecoder #-}
+
+-- | The direct form of an arbitrary cborg decoder: run it with cborg itself over
+-- the rest of the chunk. A cborg decoder does not depend on what was decoded
+-- before it, so when this succeeds it has consumed the same bytes and produced the
+-- same value as it would have in the middle of the whole input. Anything else
+-- (a failure, or a request for more input than the chunk holds) is `DBail`.
+bridgePlainDecoder :: C.Decoder s a -> ByteString -> Int -> ST s (DRes a)
+bridgePlainDecoder d bs off =
+  deserialiseIncremental d >>= \case
+    Done _ _ x -> pure (DOk off x)
+    Fail _ _ failure -> pure (bridgeFailed failure)
+    Partial k
+      | off >= BS.length bs -> pure DBail
+      | otherwise ->
+          k (Just (BS.drop off bs)) >>= \case
+            Done _ consumed x -> pure (DOk (off + fromIntegral consumed) x)
+            Fail _ _ failure -> pure (bridgeFailed failure)
+            Partial _ -> pure DBail
+{-# NOINLINE bridgePlainDecoder #-}
+
+bridgeFailed :: DeserialiseFailure -> DRes a
+bridgeFailed _ = DBail
+
+-- | A cborg primitive together with a direct reading of the same token. Where the
+-- direct reading declines, the cborg primitive itself is run at that position.
+directPrim :: C.Decoder s a -> (ByteString -> Int -> DRes a) -> Decoder s a
+directPrim d p =
+  Decoder
+    (\_ _ -> d)
+    ( \_ bs off -> case p bs off of
+        DBail -> bridgePlainDecoder d bs off
+        r -> pure r
+    )
+{-# INLINE directPrim #-}
+
+-- | Try to decode a whole strict input with the direct form of the decoder.
+-- `Nothing` means no answer: decode with `toPlainDecoder` instead. `Just` is
+-- the value and the bytes left over after it.
+decodeDirectFastPath :: Version -> ByteString -> Decoder s a -> ST s (Maybe (a, ByteString))
+decodeDirectFastPath v bs d =
+  runDirect d v bs 0 >>= \case
+    DOk off x -> pure (Just (x, BS.drop off bs))
+    DBail -> pure Nothing
+{-# INLINE decodeDirectFastPath #-}
 
 -- | Extract the underlying `C.Decoder` by optionally supplying the original bytes and
 -- specifying the concrete version to be used.
@@ -347,21 +458,24 @@ toPlainDecoder ::
   Version ->
   Decoder s a ->
   C.Decoder s a
-toPlainDecoder bsl v (Decoder d) = d bsl v
+toPlainDecoder bsl v d = runDecoder d bsl v
 {-# INLINE toPlainDecoder #-}
 
 -- | Use the supplied decoder as a plain decoder with current version.
 withPlainDecoder :: Decoder s a -> (C.Decoder s a -> C.Decoder s b) -> Decoder s b
-withPlainDecoder vd f = Decoder $ \bsl -> f . runDecoder vd bsl
+withPlainDecoder vd f = Decoder (\bsl -> f . runDecoder vd bsl) (\_ _ _ -> pure DBail)
 {-# INLINE withPlainDecoder #-}
 
 -- | Ignore the current version of the decoder and enforce the supplied one instead.
 enforceDecoderVersion :: Version -> Decoder s a -> Decoder s a
-enforceDecoderVersion version d = Decoder $ \bsl _ -> runDecoder d bsl version
+enforceDecoderVersion version d =
+  Decoder
+    (\bsl _ -> runDecoder d bsl version)
+    (\_ bs off -> runDirect d version bs off)
 {-# INLINE enforceDecoderVersion #-}
 
 decodeBytesDefinite :: Decoder s ByteString
-decodeBytesDefinite = fromPlainDecoder Plain.decodeBytes
+decodeBytesDefinite = directPrim Plain.decodeBytes dBytes
 
 -- | Decode a bytestring, accepting both definite and indefinite length encodings. Chunks
 -- of an indefinite length bytestring are concatenated together.
@@ -379,10 +493,14 @@ decodeFixedSized = FSC.rawDecodeFixedSized =<< decodeBytes
 -- fail deserialization whenever original bytes are not available.
 getOriginalBytes :: Decoder s BSL.ByteString
 getOriginalBytes =
-  Decoder $ \maybeBytes _ ->
-    case maybeBytes of
-      Nothing -> fail originalBytesExpectedFailureMessage
-      Just bsl -> pure bsl
+  Decoder
+    ( \maybeBytes _ ->
+        case maybeBytes of
+          Nothing -> fail originalBytesExpectedFailureMessage
+          Just bsl -> pure bsl
+    )
+    -- The direct form only ever runs over the whole original input, held in one chunk.
+    (\_ bs off -> pure (DOk off (BSL.fromStrict bs)))
 
 -- | This is the message that will be reported by `getOriginalBytes` when original bytes are not
 -- provided. It is defined as a separate biding for testing.
@@ -401,7 +519,7 @@ originalBytesExpectedFailureMessage =
 -- >>> decodeFullDecoder (natVersion @3) "Version" getDecoderVersion ""
 -- Right (Version 3)
 getDecoderVersion :: Decoder s Version
-getDecoderVersion = Decoder $ \_ -> pure
+getDecoderVersion = Decoder (\_ -> pure) (\v _ off -> pure (DOk off v))
 {-# INLINE getDecoderVersion #-}
 
 -- | Conditionally choose the newer or older decoder, depending on the current
@@ -1351,7 +1469,12 @@ decodeUTCTime =
 --------------------------------------------------------------------------------
 
 decodeTagMaybe :: Decoder s (Maybe Word64)
-decodeTagMaybe = fromPlainDecoder Plain.decodeTagMaybe
+decodeTagMaybe =
+  -- The same steps as Plain.decodeTagMaybe, through this module's primitives.
+  peekTokenType >>= \case
+    C.TypeTag -> Just . fromIntegral <$> decodeTag
+    C.TypeTag64 -> Just <$> decodeTag64
+    _ -> pure Nothing
 {-# INLINE decodeTagMaybe #-}
 
 allowTag :: Word -> Decoder s ()
@@ -1364,7 +1487,15 @@ allowTag tagExpected = do
 {-# INLINE allowTag #-}
 
 assertTag :: Word -> Decoder s ()
-assertTag = fromPlainDecoder . Plain.assertTag
+assertTag tagExpected = do
+  -- The same steps as Plain.assertTag, through this module's primitives.
+  tagReceived <-
+    decodeTagMaybe >>= \case
+      Just tag -> pure tag
+      Nothing -> fail "Expected tag"
+  unless (tagReceived == (fromIntegral tagExpected :: Word64)) $
+    fail $
+      "Expecteg tag " <> show tagExpected <> " but got tag " <> show tagReceived
 {-# INLINE assertTag #-}
 
 -- | Enforces that the input size is the same as the decoded one, failing in
@@ -1385,15 +1516,15 @@ matchSize lbl requestedSize actualSize =
 {-# INLINE matchSize #-}
 
 decodeBool :: Decoder s Bool
-decodeBool = fromPlainDecoder C.decodeBool
+decodeBool = directPrim C.decodeBool dBool
 {-# INLINE decodeBool #-}
 
 decodeBreakOr :: Decoder s Bool
-decodeBreakOr = fromPlainDecoder C.decodeBreakOr
+decodeBreakOr = directPrim C.decodeBreakOr dBreakOr
 {-# INLINE decodeBreakOr #-}
 
 decodeByteArrayDefinite :: Decoder s ByteArray
-decodeByteArrayDefinite = fromPlainDecoder C.decodeByteArray
+decodeByteArrayDefinite = directPrim C.decodeByteArray dByteArray
 
 decodeByteArray :: Decoder s ByteArray
 decodeByteArray =
@@ -1436,7 +1567,7 @@ decodeFloatCanonical = fromPlainDecoder C.decodeFloatCanonical
 {-# INLINE decodeFloatCanonical #-}
 
 decodeInt :: Decoder s Int
-decodeInt = fromPlainDecoder C.decodeInt
+decodeInt = directPrim C.decodeInt dInt
 {-# INLINE decodeInt #-}
 
 decodeInt16 :: Decoder s Int16
@@ -1456,7 +1587,7 @@ decodeInt32Canonical = fromPlainDecoder C.decodeInt32Canonical
 {-# INLINE decodeInt32Canonical #-}
 
 decodeInt64 :: Decoder s Int64
-decodeInt64 = fromPlainDecoder C.decodeInt64
+decodeInt64 = directPrim C.decodeInt64 dInt64
 {-# INLINE decodeInt64 #-}
 
 decodeInt64Canonical :: Decoder s Int64
@@ -1476,7 +1607,7 @@ decodeIntCanonical = fromPlainDecoder C.decodeIntCanonical
 {-# INLINE decodeIntCanonical #-}
 
 decodeInteger :: Decoder s Integer
-decodeInteger = fromPlainDecoder C.decodeInteger
+decodeInteger = directPrim C.decodeInteger dInteger
 {-# INLINE decodeInteger #-}
 
 decodeNatural :: Decoder s Natural
@@ -1492,7 +1623,7 @@ decodeIntegerCanonical = fromPlainDecoder C.decodeIntegerCanonical
 {-# INLINE decodeIntegerCanonical #-}
 
 decodeListLen :: Decoder s Int
-decodeListLen = fromPlainDecoder C.decodeListLen
+decodeListLen = directPrim C.decodeListLen dListLen
 {-# INLINE decodeListLen #-}
 
 decodeListLenCanonical :: Decoder s Int
@@ -1504,7 +1635,7 @@ decodeListLenCanonicalOf = fromPlainDecoder . C.decodeListLenCanonicalOf
 {-# INLINE decodeListLenCanonicalOf #-}
 
 decodeListLenIndef :: Decoder s ()
-decodeListLenIndef = fromPlainDecoder C.decodeListLenIndef
+decodeListLenIndef = directPrim C.decodeListLenIndef dListLenIndef
 {-# INLINE decodeListLenIndef #-}
 
 decodeListLenOf :: Int -> Decoder s ()
@@ -1512,11 +1643,11 @@ decodeListLenOf = fromPlainDecoder . C.decodeListLenOf
 {-# INLINE decodeListLenOf #-}
 
 decodeListLenOrIndef :: Decoder s (Maybe Int)
-decodeListLenOrIndef = fromPlainDecoder C.decodeListLenOrIndef
+decodeListLenOrIndef = directPrim C.decodeListLenOrIndef dListLenOrIndef
 {-# INLINE decodeListLenOrIndef #-}
 
 decodeMapLen :: Decoder s Int
-decodeMapLen = fromPlainDecoder C.decodeMapLen
+decodeMapLen = directPrim C.decodeMapLen dMapLen
 {-# INLINE decodeMapLen #-}
 
 decodeMapLenCanonical :: Decoder s Int
@@ -1524,11 +1655,11 @@ decodeMapLenCanonical = fromPlainDecoder C.decodeMapLenCanonical
 {-# INLINE decodeMapLenCanonical #-}
 
 decodeMapLenIndef :: Decoder s ()
-decodeMapLenIndef = fromPlainDecoder C.decodeMapLenIndef
+decodeMapLenIndef = directPrim C.decodeMapLenIndef dMapLenIndef
 {-# INLINE decodeMapLenIndef #-}
 
 decodeMapLenOrIndef :: Decoder s (Maybe Int)
-decodeMapLenOrIndef = fromPlainDecoder C.decodeMapLenOrIndef
+decodeMapLenOrIndef = directPrim C.decodeMapLenOrIndef dMapLenOrIndef
 {-# INLINE decodeMapLenOrIndef #-}
 
 decodeNegWord :: Decoder s Word
@@ -1548,7 +1679,7 @@ decodeNegWordCanonical = fromPlainDecoder C.decodeNegWordCanonical
 {-# INLINE decodeNegWordCanonical #-}
 
 decodeNull :: Decoder s ()
-decodeNull = fromPlainDecoder C.decodeNull
+decodeNull = directPrim C.decodeNull dNull
 {-# INLINE decodeNull #-}
 
 decodeSequenceLenIndef :: (r -> a -> r) -> r -> (r -> b) -> Decoder s a -> Decoder s b
@@ -1568,7 +1699,7 @@ decodeSimpleCanonical = fromPlainDecoder C.decodeSimpleCanonical
 {-# INLINE decodeSimpleCanonical #-}
 
 decodeStringDefinite :: Decoder s Text.Text
-decodeStringDefinite = fromPlainDecoder C.decodeString
+decodeStringDefinite = directPrim C.decodeString dString
 {-# INLINE decodeStringDefinite #-}
 
 decodeString :: Decoder s Text.Text
@@ -1649,11 +1780,11 @@ decodeByteArrayDefOrIndef =
 {-# INLINE decodeByteArrayDefOrIndef #-}
 
 decodeTag :: Decoder s Word
-decodeTag = fromPlainDecoder C.decodeTag
+decodeTag = directPrim C.decodeTag dTag
 {-# INLINE decodeTag #-}
 
 decodeTag64 :: Decoder s Word64
-decodeTag64 = fromPlainDecoder C.decodeTag64
+decodeTag64 = directPrim C.decodeTag64 dTag64
 {-# INLINE decodeTag64 #-}
 
 decodeTag64Canonical :: Decoder s Word64
@@ -1673,15 +1804,27 @@ decodeUtf8ByteArrayCanonical = fromPlainDecoder C.decodeUtf8ByteArrayCanonical
 {-# INLINE decodeUtf8ByteArrayCanonical #-}
 
 decodeWithByteSpan :: Decoder s a -> Decoder s (a, C.ByteOffset, C.ByteOffset)
-decodeWithByteSpan d = withPlainDecoder d C.decodeWithByteSpan
+decodeWithByteSpan d =
+  Decoder
+    (\bsl v -> C.decodeWithByteSpan (runDecoder d bsl v))
+    -- cborg's decodeWithByteSpan reports the offsets before and after the value;
+    -- in the direct form those are the offsets into the chunk.
+    ( \v bs off ->
+        runDirect d v bs off >>= \case
+          DOk off' x ->
+            let !start = fromIntegral off
+                !end = fromIntegral off'
+             in pure (DOk off' (x, start, end))
+          DBail -> pure DBail
+    )
 {-# INLINE decodeWithByteSpan #-}
 
 decodeWord :: Decoder s Word
-decodeWord = fromPlainDecoder C.decodeWord
+decodeWord = directPrim C.decodeWord dWord
 {-# INLINE decodeWord #-}
 
 decodeWord16 :: Decoder s Word16
-decodeWord16 = fromPlainDecoder C.decodeWord16
+decodeWord16 = directPrim C.decodeWord16 dWord16
 {-# INLINE decodeWord16 #-}
 
 decodeWord16Canonical :: Decoder s Word16
@@ -1689,7 +1832,7 @@ decodeWord16Canonical = fromPlainDecoder C.decodeWord16Canonical
 {-# INLINE decodeWord16Canonical #-}
 
 decodeWord32 :: Decoder s Word32
-decodeWord32 = fromPlainDecoder C.decodeWord32
+decodeWord32 = directPrim C.decodeWord32 dWord32
 {-# INLINE decodeWord32 #-}
 
 decodeWord32Canonical :: Decoder s Word32
@@ -1697,7 +1840,7 @@ decodeWord32Canonical = fromPlainDecoder C.decodeWord32Canonical
 {-# INLINE decodeWord32Canonical #-}
 
 decodeWord64 :: Decoder s Word64
-decodeWord64 = fromPlainDecoder C.decodeWord64
+decodeWord64 = directPrim C.decodeWord64 dWord64
 {-# INLINE decodeWord64 #-}
 
 decodeWord64Canonical :: Decoder s Word64
@@ -1705,7 +1848,7 @@ decodeWord64Canonical = fromPlainDecoder C.decodeWord64Canonical
 {-# INLINE decodeWord64Canonical #-}
 
 decodeWord8 :: Decoder s Word8
-decodeWord8 = fromPlainDecoder C.decodeWord8
+decodeWord8 = directPrim C.decodeWord8 dWord8
 {-# INLINE decodeWord8 #-}
 
 decodeWord8Canonical :: Decoder s Word8
@@ -1729,17 +1872,443 @@ decodeTerm = fromPlainDecoder C.decodeTerm
 {-# INLINE decodeTerm #-}
 
 peekAvailable :: Decoder s Int
-peekAvailable = fromPlainDecoder C.peekAvailable
+peekAvailable = Decoder (\_ _ -> C.peekAvailable) (\_ _ _ -> pure DBail)
 {-# INLINE peekAvailable #-}
 
 peekByteOffset :: Decoder s C.ByteOffset
-peekByteOffset = fromPlainDecoder C.peekByteOffset
+peekByteOffset =
+  Decoder
+    (\_ _ -> C.peekByteOffset)
+    (\_ _ off -> let !o = fromIntegral off in pure (DOk off o))
 {-# INLINE peekByteOffset #-}
 
 peekTokenType :: Decoder s C.TokenType
-peekTokenType = fromPlainDecoder C.peekTokenType
+peekTokenType = directPrim C.peekTokenType dTokenType
 {-# INLINE peekTokenType #-}
 
 liftST :: ST s a -> Decoder s a
-liftST st = Decoder $ \_ _ -> C.liftST st
+liftST st = Decoder (\_ _ -> C.liftST st) (\_ _ off -> st >>= \x -> pure (DOk off x))
 {-# INLINE liftST #-}
+
+--------------------------------------------------------------------------------
+-- Direct primitives (DIRECT-PRIMS-BEGIN)
+--------------------------------------------------------------------------------
+--
+-- Direct readings of single CBOR tokens out of one strict chunk, for
+-- `directPrim`. Each answers `DOk` only where the cborg-0.2.10.0 primitive
+-- named in its comment, run at the same position with the whole token in the
+-- chunk, succeeds with the same value and length; everything else is `DBail`,
+-- which hands that token to cborg. Line references are to cborg-0.2.10.0's
+-- Codec/CBOR/Read.hs and Codec/CBOR/Decoding.hs.
+
+------------------------------------------------------------------------------
+-- Helpers
+
+-- | True on 64-bit targets (Int and Word are 64 bits). Constant-folded.
+dIs64 :: Bool
+dIs64 = finiteBitSize (0 :: Int) == 64 && finiteBitSize (0 :: Word) == 64
+{-# INLINE dIs64 #-}
+
+-- | Is @off@ a valid index of a byte in @bs@ (and are we on 64-bit)?
+dOkOff :: ByteString -> Int -> Bool
+dOkOff bs off = dIs64 && off >= 0 && off < BS.length bs
+{-# INLINE dOkOff #-}
+
+-- | 2^63: arguments at or above this do not fit a non-negative Int; cborg's
+-- word64ToInt returns Nothing for them.
+dTwoP63 :: Word64
+dTwoP63 = 0x8000000000000000
+{-# INLINE dTwoP63 #-}
+
+-- | Decode the argument of the head byte at offset @p@ (precondition:
+-- @0 <= p < BS.length bs@), given its additional-info bits @ai@.
+-- Returns the offset just after the head and the argument. Bails on
+-- additional info 28..31 and when the head is truncated (cborg's
+-- go_fast_end tokenSize check, Read.hs:747-750, would leave the token to the
+-- slow path, which needs more input). Big-endian, any width.
+dArg :: ByteString -> Int -> Word8 -> DRes Word64
+dArg bs p ai
+  | ai < 24   = DOk (p + 1) (fromIntegral ai)
+  | ai == 24  = if rest >= 2 then DOk (p + 2) (b 1) else DBail
+  | ai == 25  = if rest >= 3 then DOk (p + 3) ((b 1 `shiftL` 8) .|. b 2) else DBail
+  | ai == 26  = if rest >= 5
+                  then DOk (p + 5) ((b 1 `shiftL` 24) .|. (b 2 `shiftL` 16)
+                                 .|. (b 3 `shiftL` 8)  .|.  b 4)
+                  else DBail
+  | ai == 27  = if rest >= 9
+                  then DOk (p + 9) ((b 1 `shiftL` 56) .|. (b 2 `shiftL` 48)
+                                 .|. (b 3 `shiftL` 40) .|. (b 4 `shiftL` 32)
+                                 .|. (b 5 `shiftL` 24) .|. (b 6 `shiftL` 16)
+                                 .|. (b 7 `shiftL` 8)  .|.  b 8)
+                  else DBail
+  | otherwise = DBail
+  where
+    rest = BS.length bs - p          -- >= 1, no overflow (0 <= p < len)
+    b :: Int -> Word64
+    b i = fromIntegral (BS.index bs (p + i))
+{-# INLINE dArg #-}
+
+-- | Argument of a head whose major type must be @mt@ (0..7).
+dArgOfMajor :: Word8 -> ByteString -> Int -> DRes Word64
+dArgOfMajor mt bs off
+  | not (dOkOff bs off) = DBail
+  | otherwise =
+      let !h = BS.index bs off
+      in if h `shiftR` 5 == mt then dArg bs off (h .&. 0x1f) else DBail
+{-# INLINE dArgOfMajor #-}
+
+------------------------------------------------------------------------------
+-- Unsigned integers
+
+-- | decodeWord = ConsumeWord (Decoding.hs:392-393).
+-- DOk: heads 0x00-0x1b (major 0), any width incl. over-long, any 64-bit
+-- value. Read.hs:1595-1633 tryConsumeWord: 0x00-0x17 literal, 0x18/0x19/0x1a
+-- size 2/3/5, 0x1b size 9 with word64ToWord (total on ARCH_64bit,
+-- Read.hs:1625-1626). go_fast Read.hs:271-274, go_fast_end Read.hs:752-755.
+-- Bail: every other head (cborg: DecodeFailure -> "expected word"; note
+-- major 1 is NOT accepted by decodeWord), truncated head, bad offset.
+dWord :: ByteString -> Int -> DRes Word
+dWord bs off = case dArgOfMajor 0 bs off of
+  DOk o w -> DOk o (fromIntegral w)
+  DBail   -> DBail
+
+-- | decodeWord8 = ConsumeWord8 (Decoding.hs:399-400).
+-- DOk: major-0 heads (any width) whose value <= 0xff. go_fast Read.hs:276-282
+-- (gtWord# w# 0xff## -> 0# continues), go_fast_end Read.hs:757-763.
+-- Bail: value > 0xff (cborg: "expected word8"), non-major-0, truncation.
+dWord8 :: ByteString -> Int -> DRes Word8
+dWord8 bs off = case dArgOfMajor 0 bs off of
+  DOk o w | w <= 0xff -> DOk o (fromIntegral w)
+  _                   -> DBail
+
+-- | decodeWord16 = ConsumeWord16 (Decoding.hs:406-407).
+-- DOk: major-0 heads (any width) with value <= 0xffff. go_fast
+-- Read.hs:284-290, go_fast_end Read.hs:765-771.
+-- Bail: value > 0xffff (cborg fails), otherwise as dWord.
+dWord16 :: ByteString -> Int -> DRes Word16
+dWord16 bs off = case dArgOfMajor 0 bs off of
+  DOk o w | w <= 0xffff -> DOk o (fromIntegral w)
+  _                     -> DBail
+
+-- | decodeWord32 = ConsumeWord32 (Decoding.hs:413-414).
+-- DOk: major-0 heads (any width) with value <= 0xffffffff. go_fast
+-- Read.hs:292-301 (64-bit branch: gtWord# w# 0xffffffff##), go_fast_end
+-- Read.hs:773-783.  Bail: value > 0xffffffff (cborg fails), otherwise as dWord.
+dWord32 :: ByteString -> Int -> DRes Word32
+dWord32 bs off = case dArgOfMajor 0 bs off of
+  DOk o w | w <= 0xffffffff -> DOk o (fromIntegral w)
+  _                         -> DBail
+
+-- | decodeWord64: on ARCH_64bit it is ConsumeWord (Decoding.hs:420-427), so
+-- exactly dWord's acceptance: all major-0 heads, any width, any value.
+dWord64 :: ByteString -> Int -> DRes Word64
+dWord64 = dArgOfMajor 0
+
+------------------------------------------------------------------------------
+-- Signed integers
+
+-- | decodeInt = ConsumeInt (Decoding.hs:451-452); tryConsumeInt Read.hs:1677-1755.
+-- DOk:
+--   * 0x00-0x17 (value = ai), 0x18/0x19/0x1a (any value; on 64-bit
+--     word32ToInt is total, Read.hs:1706-1707), 0x1b with value < 2^63
+--     (word64ToInt Just, Read.hs:1713-1715).
+--   * 0x20-0x37 (value -1-ai), 0x38/0x39/0x3a (-1-n, Read.hs:1742-1745),
+--     0x3b with n < 2^63 -> -1-n >= -2^63 (Read.hs:1751-1753).
+--   go_fast Read.hs:309-312, go_fast_end Read.hs:790-793.
+-- Bail: 0x1b / 0x3b with n >= 2^63 (cborg: word64ToInt Nothing ->
+--   DecodeFailure -> "expected int"); every other major; ai 28-31; truncation.
+dInt :: ByteString -> Int -> DRes Int
+dInt bs off
+  | not (dOkOff bs off) = DBail
+  | otherwise =
+      let !h = BS.index bs off
+          !mt = h `shiftR` 5
+      in if mt == 0 then
+           case dArg bs off (h .&. 0x1f) of
+             DOk o w | w < dTwoP63 -> DOk o (fromIntegral w)
+             _                    -> DBail
+         else if mt == 1 then
+           case dArg bs off (h .&. 0x1f) of
+             DOk o w | w < dTwoP63 -> DOk o (-1 - fromIntegral w)
+             _                    -> DBail
+         else DBail
+
+-- | decodeInt64: on ARCH_64bit it is ConsumeInt (Decoding.hs:479-486), so
+-- exactly dInt's acceptance and value (toInt64 is the identity on 64-bit).
+dInt64 :: ByteString -> Int -> DRes Int64
+dInt64 bs off = case dInt bs off of
+  DOk o n -> DOk o (fromIntegral n)
+  DBail   -> DBail
+
+-- | decodeInteger = ConsumeInteger (Decoding.hs:590-591);
+-- tryConsumeInteger Read.hs:1758-1850.
+-- DOk: 0x00-0x1b -> toInteger n; 0x20-0x3b -> -1 - toInteger n, for ALL
+--   64-bit n, any width (BigIntToken; the canonical flag is ignored by
+--   ConsumeInteger). go_fast Read.hs:541-544 (any BigIntToken), go_fast_end
+--   Read.hs:1030-1032.
+-- Bail (by choice): 0xc2 / 0xc3 bignum tags (cborg handles them, possibly
+--   across chunks: readBigUInt/readBigNInt) -- we never decode them here.
+-- Bail: everything else (cborg: DecodeFailure "expected integer"), truncation.
+dInteger :: ByteString -> Int -> DRes Integer
+dInteger bs off
+  | not (dOkOff bs off) = DBail
+  | otherwise =
+      let !h = BS.index bs off
+          !mt = h `shiftR` 5
+      in if mt == 0 then
+           case dArg bs off (h .&. 0x1f) of
+             DOk o w -> DOk o (toInteger w)
+             DBail   -> DBail
+         else if mt == 1 then
+           case dArg bs off (h .&. 0x1f) of
+             DOk o w -> DOk o (-1 - toInteger w)
+             DBail   -> DBail
+         else DBail
+
+------------------------------------------------------------------------------
+-- Lists and maps
+
+-- | Major type @mt@ (4 or 5) definite length that must fit a non-negative Int.
+dLenOfMajor :: Word8 -> ByteString -> Int -> DRes Int
+dLenOfMajor mt bs off = case dArgOfMajor mt bs off of
+  DOk o w | w < dTwoP63 -> DOk o (fromIntegral w)
+  _                    -> DBail
+{-# INLINE dLenOfMajor #-}
+
+-- | decodeListLen = ConsumeListLen (Decoding.hs:701-702);
+-- tryConsumeListLen Read.hs:1925-1965.
+-- DOk: 0x80-0x97 (len = ai), 0x98/0x99/0x9a any value (64-bit
+--   word32ToInt total, Read.hs:1954-1955), 0x9b with n < 2^63
+--   (word64ToInt Just, Read.hs:1961-1963). Any width (over-long accepted).
+--   go_fast Read.hs:342-345, go_fast_end Read.hs:823-826.
+-- Bail: 0x9f indefinite (no case in tryConsumeListLen -> "expected list
+--   len"), 0x9b with n >= 2^63 (word64ToInt Nothing -> DecodeFailure),
+--   0x9c-0x9e, other majors, truncation.
+dListLen :: ByteString -> Int -> DRes Int
+dListLen = dLenOfMajor 4
+
+-- | decodeMapLen = ConsumeMapLen (Decoding.hs:723-724);
+-- tryConsumeMapLen Read.hs:1968-2008. Same shape as dListLen on 0xa0-0xbb.
+-- go_fast Read.hs:347-350, go_fast_end Read.hs:828-831.
+-- Bail: 0xbf, 0xbb with n >= 2^63, 0xbc-0xbe, other majors, truncation.
+dMapLen :: ByteString -> Int -> DRes Int
+dMapLen = dLenOfMajor 5
+
+-- | decodeListLenOrIndef (Decoding.hs:914-920): ConsumeListLenOrIndef, then
+-- n >= 0 -> Just n, else Nothing. tryConsumeListLenOrIndef Read.hs:2025-2067:
+-- definite heads as dListLen (values are always >= 0, since 0x9b demands
+-- n < 2^63), 0x9f -> (-1) -> Nothing (Read.hs:2065), size 1.
+-- go_fast Read.hs:688-691, go_fast_end Read.hs:1197-1200.
+-- Bail: as dListLen except 0x9f.
+dListLenOrIndef :: ByteString -> Int -> DRes (Maybe Int)
+dListLenOrIndef bs off
+  | dOkOff bs off && BS.index bs off == 0x9f = DOk (off + 1) Nothing
+  | otherwise = case dLenOfMajor 4 bs off of
+      DOk o n -> DOk o (Just n)
+      DBail   -> DBail
+
+-- | decodeMapLenOrIndef (Decoding.hs:928-934); tryConsumeMapLenOrIndef
+-- Read.hs:2070-2112, 0xbf -> Nothing (Read.hs:2110).
+-- go_fast Read.hs:693-696, go_fast_end Read.hs:1202-1205.
+dMapLenOrIndef :: ByteString -> Int -> DRes (Maybe Int)
+dMapLenOrIndef bs off
+  | dOkOff bs off && BS.index bs off == 0xbf = DOk (off + 1) Nothing
+  | otherwise = case dLenOfMajor 5 bs off of
+      DOk o n -> DOk o (Just n)
+      DBail   -> DBail
+
+-- | decodeListLenIndef (Decoding.hs:716-717): only 0x9f, size 1
+-- (tryConsumeListLenIndef Read.hs:2011-2015; go_fast Read.hs:673-676,
+-- go_fast_end Read.hs:1182-1185). Anything else: cborg fails -> DBail.
+dListLenIndef :: ByteString -> Int -> DRes ()
+dListLenIndef bs off
+  | dOkOff bs off && BS.index bs off == 0x9f = DOk (off + 1) ()
+  | otherwise = DBail
+{-# INLINE dListLenIndef #-}
+
+-- | decodeMapLenIndef (Decoding.hs:738-739): only 0xbf, size 1
+-- (Read.hs:2018-2022; go_fast Read.hs:678-681, go_fast_end Read.hs:1187-1190).
+dMapLenIndef :: ByteString -> Int -> DRes ()
+dMapLenIndef bs off
+  | dOkOff bs off && BS.index bs off == 0xbf = DOk (off + 1) ()
+  | otherwise = DBail
+{-# INLINE dMapLenIndef #-}
+
+-- | decodeBreakOr (Decoding.hs:941-942). tryConsumeBreakOr Read.hs:2483-2486:
+-- 0xff -> DOk +1 True; any other byte -> False consuming nothing
+-- (go_fast Read.hs:698-701: DecodeFailure -> k False >>= go_fast bs;
+-- go_fast_end Read.hs:735-738 likewise). Note any non-0xff byte, even an
+-- invalid head, gives False: cborg does not inspect it further here.
+-- Bail: no byte available (go_fast_end Read.hs:733: BS.null -> slow path,
+-- which needs more input), bad offset.
+dBreakOr :: ByteString -> Int -> DRes Bool
+dBreakOr bs off
+  | not (dOkOff bs off)        = DBail
+  | BS.index bs off == 0xff   = DOk (off + 1) True
+  | otherwise                 = DOk off False
+{-# INLINE dBreakOr #-}
+
+------------------------------------------------------------------------------
+-- Tags
+
+-- | decodeTag = ConsumeTag (Decoding.hs:745-746); tryConsumeTag
+-- Read.hs:2115-2154. DOk: 0xc0-0xdb, any width, any 64-bit value
+-- (0xdb uses word64ToWord, total on ARCH_64bit, Read.hs:2147-2148).
+-- Note 0xc2/0xc3 ARE accepted as plain tags 2/3 by decodeTag.
+-- go_fast Read.hs:352-355, go_fast_end Read.hs:833-836.
+-- Bail: other heads (incl. 0xdc-0xdf), truncation.
+dTag :: ByteString -> Int -> DRes Word
+dTag bs off = case dArgOfMajor 6 bs off of
+  DOk o w -> DOk o (fromIntegral w)
+  DBail   -> DBail
+
+-- | decodeTag64: on ARCH_64bit it is ConsumeTag (Decoding.hs:752-765), so
+-- exactly dTag's acceptance, value widened to Word64.
+dTag64 :: ByteString -> Int -> DRes Word64
+dTag64 = dArgOfMajor 6
+
+------------------------------------------------------------------------------
+-- Simple values
+
+-- | decodeNull (Decoding.hs:804-805): only 0xf6, size 1 (tryConsumeNull
+-- Read.hs:2476-2480; go_fast Read.hs:683-686, go_fast_end Read.hs:1192-1195).
+dNull :: ByteString -> Int -> DRes ()
+dNull bs off
+  | dOkOff bs off && BS.index bs off == 0xf6 = DOk (off + 1) ()
+  | otherwise = DBail
+{-# INLINE dNull #-}
+
+-- | decodeBool (Decoding.hs:797-798): 0xf4 -> False, 0xf5 -> True, size 1
+-- (tryConsumeBool Read.hs:2421-2425; go_fast Read.hs:587-590, go_fast_end
+-- Read.hs:1081-1084). Everything else (incl. 0xf8 0x14 simple 20): DBail.
+dBool :: ByteString -> Int -> DRes Bool
+dBool bs off
+  | not (dOkOff bs off) = DBail
+  | otherwise = case BS.index bs off of
+      0xf4 -> DOk (off + 1) False
+      0xf5 -> DOk (off + 1) True
+      _    -> DBail
+{-# INLINE dBool #-}
+
+------------------------------------------------------------------------------
+-- Byte and text strings
+
+-- | Definite-length payload of major @mt@ (2 or 3), wholly in the buffer.
+dPayloadOfMajor :: Word8 -> ByteString -> Int -> DRes ByteString
+dPayloadOfMajor mt bs off = case dArgOfMajor mt bs off of
+  DOk o w
+    | w < dTwoP63
+    , let !n = fromIntegral w :: Int
+    , n <= BS.length bs - o          -- no overflow: o <= length
+    -> DOk (o + n) (BS.take n (BS.drop o bs))
+  _ -> DBail
+{-# INLINE dPayloadOfMajor #-}
+
+-- | decodeBytes = ConsumeBytes (Decoding.hs:611-612); tryConsumeBytes
+-- Read.hs:1853-1886 with readBytesSmall/8/16/32/64 Read.hs:2489-2565.
+-- DOk: 0x40-0x5b (any width of length head) when the length n satisfies
+--   n <= bytes remaining after the head ("Fits", Read.hs:2492-2494,
+--   2510-2512, 2523-2525, 2535-2543 (64-bit: word32ToInt total), 2554-2558
+--   (0x5b requires word64ToInt Just, i.e. n < 2^63)); consumes head + n;
+--   value = the n payload bytes (zero-length -> empty).
+--   go_fast Read.hs:556-559, go_fast_end Read.hs:1049-1052 (Fits branch).
+-- Bail: TooLong (payload not wholly in buffer: cborg goes to the slow path,
+--   needs more input); 0x5b with n >= 2^63 (DecodeFailure, Read.hs:2563);
+--   0x5f indefinite and 0x5c-0x5e (DecodeFailure); other majors; truncated
+--   head.
+dBytes :: ByteString -> Int -> DRes ByteString
+dBytes = dPayloadOfMajor 2
+
+-- | decodeString = ConsumeString (Decoding.hs:655-656); tryConsumeString
+-- Read.hs:1889-1922 (same readBytes* helpers as bytes, on 0x60-0x7b).
+-- DOk: as dBytes on 0x60-0x7b AND Data.Text.Encoding.decodeUtf8' of the
+--   payload is Right t; value t. cborg calls exactly T.decodeUtf8' on the
+--   Fits payload: go_fast Read.hs:570-574, go_fast_end Read.hs:1064-1068.
+-- Bail: invalid UTF-8 (cborg: SlowFail "invalid UTF8"), TooLong, 0x7f
+--   indefinite, 0x7c-0x7e, 0x7b with n >= 2^63, other majors, truncation.
+dString :: ByteString -> Int -> DRes Text.Text
+dString bs off = case dPayloadOfMajor 3 bs off of
+  DOk o p -> case Text.decodeUtf8' p of
+    Right t -> DOk o t
+    Left _  -> DBail
+  DBail   -> DBail
+
+------------------------------------------------------------------------------
+-- Token type peek
+
+-- | peekTokenType = PeekTokenType (Decoding.hs:952-953). Consumes nothing.
+-- cborg: go_fast Read.hs:703-706 / go_fast_end Read.hs:740-743 look up
+-- decodeTokenTypeTable (Read.hs:1461-1503) on the head byte ONLY; a byte
+-- is required (go_fast_end Read.hs:733: empty -> slow path).
+-- DOk: every head byte whose head (tokenSize bytes: 1, or 2/3/5/9 for ai
+--   24/25/26/27) is wholly present; value per the table:
+--     mt 0: ai 0-26 C.TypeUInt, 27 C.TypeUInt64, 28-31 C.TypeInvalid
+--     mt 1: ai 0-26 C.TypeNInt, 27 C.TypeNInt64, 28-31 C.TypeInvalid
+--     mt 2: ai 0-27 C.TypeBytes, 28-30 C.TypeInvalid, 31 C.TypeBytesIndef
+--     mt 3: ai 0-27 C.TypeString, 28-30 C.TypeInvalid, 31 C.TypeStringIndef
+--     mt 4: ai 0-26 C.TypeListLen, 27 C.TypeListLen64, 28-30 Invalid, 31 Indef
+--     mt 5: ai 0-26 C.TypeMapLen, 27 C.TypeMapLen64, 28-30 Invalid, 31 Indef
+--     mt 6: ai 2,3 C.TypeInteger; 0,1,4-26 C.TypeTag; 27 C.TypeTag64; 28-31 Invalid
+--     mt 7: ai 0-19 C.TypeSimple, 20/21 C.TypeBool, 22 C.TypeNull, 23/24
+--           C.TypeSimple, 25/26/27 C.TypeFloat16/32/64, 28-30 Invalid, 31 Break
+-- Bail: no byte (end of input / bad offset) -- cborg's slow path would need
+--   more input. ALSO bail (by choice, cborg would actually succeed using just
+--   the first byte) when the head's argument bytes are truncated: such a
+--   token cannot be consumed in this chunk anyway.
+dTokenType :: ByteString -> Int -> DRes C.TokenType
+dTokenType bs off
+  | not (dOkOff bs off) = DBail
+  | otherwise =
+      let !h   = BS.index bs off
+          !mt  = h `shiftR` 5
+          !ai  = h .&. 0x1f
+          !need | ai < 24 || ai > 27 = 1
+                | ai == 24  = 2
+                | ai == 25  = 3
+                | ai == 26  = 5
+                | otherwise = 9 :: Int
+      in if BS.length bs - off < need then DBail
+         else DOk off (dClassify mt ai)
+
+dClassify :: Word8 -> Word8 -> C.TokenType
+dClassify mt ai
+  | ai >= 28 && ai <= 30 = C.TypeInvalid
+  | otherwise = case mt of
+      0 -> intLike C.TypeUInt C.TypeUInt64
+      1 -> intLike C.TypeNInt C.TypeNInt64
+      2 -> if ai == 31 then C.TypeBytesIndef else C.TypeBytes
+      3 -> if ai == 31 then C.TypeStringIndef else C.TypeString
+      4 -> lenLike C.TypeListLen C.TypeListLen64 C.TypeListLenIndef
+      5 -> lenLike C.TypeMapLen C.TypeMapLen64 C.TypeMapLenIndef
+      6 | ai == 2 || ai == 3 -> C.TypeInteger
+        | ai == 31  -> C.TypeInvalid
+        | ai == 27  -> C.TypeTag64
+        | otherwise -> C.TypeTag
+      _ | ai <= 19  -> C.TypeSimple
+        | ai <= 21  -> C.TypeBool
+        | ai == 22  -> C.TypeNull
+        | ai <= 24  -> C.TypeSimple
+        | ai == 25  -> C.TypeFloat16
+        | ai == 26  -> C.TypeFloat32
+        | ai == 27  -> C.TypeFloat64
+        | otherwise -> C.TypeBreak
+  where
+    intLike small big
+      | ai == 31  = C.TypeInvalid
+      | ai == 27  = big
+      | otherwise = small
+    lenLike small big indef
+      | ai == 31  = indef
+      | ai == 27  = big
+      | otherwise = small
+
+-- | decodeByteArray = ConsumeByteArray: cborg reads the token with the same
+-- tryConsumeBytes as decodeBytes (go_fast Read.hs:563-566) and copies the payload
+-- into a fresh byte array, as `toShort` does here.
+dByteArray :: ByteString -> Int -> DRes ByteArray
+dByteArray bs off = case dBytes bs off of
+  DOk o payload -> case toShort payload of
+    SBS ba -> DOk o (BA (Prim.ByteArray ba))
+  DBail -> DBail
+
+-- DIRECT-PRIMS-END
