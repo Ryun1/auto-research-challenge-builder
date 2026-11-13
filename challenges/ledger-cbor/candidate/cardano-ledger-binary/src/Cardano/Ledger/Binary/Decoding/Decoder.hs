@@ -301,14 +301,23 @@ newtype Decoder s a = Decoder
   { runDecoder :: Maybe BSL.ByteString -> Version -> C.Decoder s a
   }
 
+-- The mapped function is applied as soon as the argument has been decoded,
+-- instead of leaving one updatable thunk per `fmap`/`<*>` for `rnf` (or a
+-- strict constructor field) to enter later. `<$` keeps its default, lazy
+-- meaning.
 instance Functor (Decoder s) where
-  fmap f d = Decoder (\bsl v -> f <$> runDecoder d bsl v)
+  fmap f d = Decoder (\bsl v -> runDecoder d bsl v >>= \x -> pure $! f x)
   {-# INLINE fmap #-}
+  x <$ d = Decoder (\bsl v -> x <$ runDecoder d bsl v)
+  {-# INLINE (<$) #-}
 
 instance Applicative (Decoder s) where
   pure x = Decoder (\_ _ -> pure x)
   {-# INLINE pure #-}
-  Decoder f <*> Decoder g = Decoder $ \bsl v -> f bsl v <*> g bsl v
+  Decoder f <*> Decoder g = Decoder $ \bsl v -> do
+    h <- f bsl v
+    x <- g bsl v
+    pure $! h x
   {-# INLINE (<*>) #-}
   Decoder f *> Decoder g = Decoder $ \bsl v -> f bsl v *> g bsl v
   {-# INLINE (*>) #-}

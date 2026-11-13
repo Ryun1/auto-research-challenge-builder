@@ -197,14 +197,25 @@ newtype FullByteString = Full BSL.ByteString
 -- @
 newtype Annotator a = Annotator {runAnnotator :: FullByteString -> Either DecoderError a}
 
+-- As for `Decoder`: the mapped function is applied when the annotator runs,
+-- instead of leaving a thunk (and, for `<*>`, a partial application) per
+-- layer. Which `Left` wins is unchanged: the left argument's, then the right's.
 instance Functor Annotator where
-  fmap f (Annotator m) = Annotator (fmap f . m)
+  fmap f (Annotator m) = Annotator $ \bytes -> case m bytes of
+    Left e -> Left e
+    Right x -> Right $! f x
   {-# INLINE fmap #-}
+  x <$ Annotator m = Annotator $ \bytes -> x <$ m bytes
+  {-# INLINE (<$) #-}
 
 instance Applicative Annotator where
   pure = Annotator . const . pure
   {-# INLINE pure #-}
-  (<*>) (Annotator m1) (Annotator m2) = Annotator $ \bytes -> m1 bytes <*> m2 bytes
+  (<*>) (Annotator m1) (Annotator m2) = Annotator $ \bytes -> case m1 bytes of
+    Left e -> Left e
+    Right f -> case m2 bytes of
+      Left e -> Left e
+      Right x -> Right $! f x
   {-# INLINE (<*>) #-}
 
 instance Monad Annotator where
