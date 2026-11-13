@@ -62,24 +62,24 @@ import Cardano.Ledger.BaseTypes (Network, ToKeyValuePairs (toKeyValuePairs), fro
 import Cardano.Ledger.Binary (
   Annotator,
   DecCBOR (..),
+  Decoder,
   EncCBOR (..),
   Sized (..),
   ToCBOR (..),
+  decodeBreakOr,
+  decodeMapLenOrIndef,
+  decodeWord,
   mkSized,
  )
 import Cardano.Ledger.Binary.Coders (
-  Decode (..),
   Density (..),
   Encode (..),
-  Field (..),
   Wrapped (..),
-  decode,
+  duplicateKey,
   encode,
   encodeKeyedStrictMaybe,
-  field,
-  fieldGuarded,
-  invalidField,
-  ofield,
+  invalidKey,
+  unusedRequiredKeys,
   (!>),
  )
 import Cardano.Ledger.Coin (Coin (..), decodePositiveCoin)
@@ -106,6 +106,7 @@ import Cardano.Ledger.Val (Val (..))
 import Control.DeepSeq (NFData (..), deepseq)
 import Data.Aeson (FromJSON (..), ToJSON (..), withObject, (.:), (.=))
 import qualified Data.Aeson as Aeson
+import Data.Bits (testBit, (.&.), (.|.))
 import Data.Foldable as Foldable (toList)
 import Data.Maybe.Strict (StrictMaybe (..))
 import qualified Data.OSet.Strict as OSet
@@ -113,7 +114,9 @@ import Data.Sequence.Strict (StrictSeq)
 import qualified Data.Sequence.Strict as StrictSeq
 import Data.Set (Set)
 import qualified Data.Set as Set
-import Data.Typeable (Typeable)
+import Data.Typeable (Typeable, typeOf)
+import Data.Void (Void, absurd)
+import Data.Word (Word64)
 import GHC.Generics (Generic)
 import Lens.Micro (Lens', to, (^.))
 import NoThunks.Class (InspectHeap (..), NoThunks)
@@ -180,93 +183,166 @@ instance HasEraTxLevel ConwayTxBodyRaw ConwayEra where
   toSTxLevel ConwayTxBodyRaw {} = STopTxOnly
 
 instance Typeable l => DecCBOR (ConwayTxBodyRaw l ConwayEra) where
-  decCBOR =
-    fmap asSTxTopLevel . decode $
-      SparseKeyed
-        "TxBodyRaw"
-        (asSTxTopLevel basicConwayTxBodyRaw)
-        bodyFields
-        requiredFields
-    where
-      bodyFields :: Word -> Field (ConwayTxBodyRaw TopTx ConwayEra)
-      bodyFields 0 = field (\x tx -> tx {ctbrSpendInputs = x}) From
-      bodyFields 1 = field (\x tx -> tx {ctbrOutputs = x}) From
-      bodyFields 2 = field (\x tx -> tx {ctbrFee = x}) From
-      bodyFields 3 =
-        ofield
-          (\x tx -> tx {ctbrVldt = (ctbrVldt tx) {invalidHereafter = x}})
-          From
-      bodyFields 4 =
-        fieldGuarded
-          (emptyFailure "Certificates" "non-empty")
-          OSet.null
-          (\x tx -> tx {ctbrCerts = x})
-          From
-      bodyFields 5 =
-        fieldGuarded
-          (emptyFailure "Withdrawals" "non-empty")
-          (null . unWithdrawals)
-          (\x tx -> tx {ctbrWithdrawals = x})
-          From
-      bodyFields 7 = ofield (\x tx -> tx {ctbrAuxDataHash = x}) From
-      bodyFields 8 =
-        ofield
-          (\x tx -> tx {ctbrVldt = (ctbrVldt tx) {invalidBefore = x}})
-          From
-      bodyFields 9 =
-        fieldGuarded
-          (emptyFailure "Mint" "non-empty")
-          (== mempty)
-          (\x tx -> tx {ctbrMint = x})
-          From
-      bodyFields 11 = ofield (\x tx -> tx {ctbrScriptIntegrityHash = x}) From
-      bodyFields 13 =
-        fieldGuarded
-          (emptyFailure "Collateral Inputs" "non-empty")
-          null
-          (\x tx -> tx {ctbrCollateralInputs = x})
-          From
-      bodyFields 14 =
-        fieldGuarded
-          (emptyFailure "Required Signer Hashes" "non-empty")
-          null
-          (\x tx -> tx {ctbrReqSignerHashes = x})
-          From
-      bodyFields 15 = ofield (\x tx -> tx {ctbrNetworkId = x}) From
-      bodyFields 16 = ofield (\x tx -> tx {ctbrCollateralReturn = x}) From
-      bodyFields 17 = ofield (\x tx -> tx {ctbrTotalCollateral = x}) From
-      bodyFields 18 =
-        fieldGuarded
-          (emptyFailure "Reference Inputs" "non-empty")
-          null
-          (\x tx -> tx {ctbrReferenceInputs = x})
-          From
-      bodyFields 19 =
-        fieldGuarded
-          (emptyFailure "VotingProcedures" "non-empty")
-          (null . unVotingProcedures)
-          (\x tx -> tx {ctbrVotingProcedures = x})
-          From
-      bodyFields 20 =
-        fieldGuarded
-          (emptyFailure "ProposalProcedures" "non-empty")
-          OSet.null
-          (\x tx -> tx {ctbrProposalProcedures = x})
-          From
-      bodyFields 21 = ofield (\x tx -> tx {ctbrCurrentTreasuryValue = x}) From
-      bodyFields 22 =
-        ofield
-          (\x tx -> tx {ctbrTreasuryDonation = fromSMaybe zero x})
-          (D (decodePositiveCoin $ emptyFailure "Treasury Donation" "non-zero"))
-      bodyFields n = invalidField n
-      requiredFields :: [(Word, String)]
-      requiredFields =
-        [ (0, "inputs")
-        , (1, "outputs")
-        , (2, "fee")
-        ]
-      emptyFailure fieldName requirement =
-        "TxBody: '" <> fieldName <> "' must be " <> requirement <> " when supplied"
+  decCBOR = fmap asSTxTopLevel decodeConwayTxBodyRaw
+
+-- | Direct decoder for the Conway transaction body map. Behaviourally identical to
+-- @decode (SparseKeyed "TxBodyRaw" basicConwayTxBodyRaw bodyFields requiredFields)@ with
+-- the field table that used to live in the 'DecCBOR' instance above: the same per-key
+-- checks in the same order (duplicate key before the field decoder, unknown key via
+-- 'invalidKey', the "non-empty when supplied" guards after the field decoder), the same
+-- field decoders, the same laziness (the record is rebuilt lazily, one update per key,
+-- and forced once after the whole map, before the required-keys check), and the same
+-- required keys 0, 1 and 2. Seen keys are tracked in a 'Word64' bit mask (bit @k@ for
+-- key @k@; only keys 0..22 are ever recorded, since an unknown key fails on sight).
+decodeConwayTxBodyRaw :: Decoder s (ConwayTxBodyRaw TopTx ConwayEra)
+decodeConwayTxBodyRaw =
+  decodeMapLenOrIndef >>= \case
+    Just len -> decodeConwayTxBodyRawDefinite len basicConwayTxBodyRaw 0
+    Nothing -> decodeConwayTxBodyRawIndefinite basicConwayTxBodyRaw 0
+
+decodeConwayTxBodyRawDefinite ::
+  Int -> ConwayTxBodyRaw TopTx ConwayEra -> Word64 -> Decoder s (ConwayTxBodyRaw TopTx ConwayEra)
+decodeConwayTxBodyRawDefinite 0 tx seenKeys = finishConwayTxBodyRaw tx seenKeys
+decodeConwayTxBodyRawDefinite remaining tx seenKeys =
+  decodeConwayTxBodyRawField tx seenKeys (decodeConwayTxBodyRawDefinite (remaining - 1))
+
+decodeConwayTxBodyRawIndefinite ::
+  ConwayTxBodyRaw TopTx ConwayEra -> Word64 -> Decoder s (ConwayTxBodyRaw TopTx ConwayEra)
+decodeConwayTxBodyRawIndefinite tx seenKeys =
+  decodeBreakOr >>= \case
+    True -> finishConwayTxBodyRaw tx seenKeys
+    False -> decodeConwayTxBodyRawField tx seenKeys decodeConwayTxBodyRawIndefinite
+
+-- | Force the record (as @(!v, used) <- ...@ does in 'decodeSparse') and then check that
+-- the required keys 0 (inputs), 1 (outputs) and 2 (fee) were all present.
+finishConwayTxBodyRaw ::
+  ConwayTxBodyRaw TopTx ConwayEra -> Word64 -> Decoder s (ConwayTxBodyRaw TopTx ConwayEra)
+finishConwayTxBodyRaw tx seenKeys =
+  tx `seq`
+    if seenKeys .&. 7 == 7
+      then pure tx
+      else
+        unusedRequiredKeys
+          (Set.fromList (filter (testBit seenKeys . fromIntegral) [0 .. 22]))
+          [(0, "inputs"), (1, "outputs"), (2, "fee")]
+          (show (typeOf tx))
+
+-- | Fail with 'duplicateKey' when the key's bit is already set, otherwise run the decoder.
+checkFreshTxBodyKey :: Word -> Word64 -> Word64 -> Decoder s r -> Decoder s r
+checkFreshTxBodyKey txBodyKey keyBit seenKeys decodeRest
+  | seenKeys .&. keyBit /= 0 = duplicateKey "TxBodyRaw" txBodyKey
+  | otherwise = decodeRest
+{-# INLINE checkFreshTxBodyKey #-}
+
+-- | Decode one key and its value, and pass the (lazily) updated record and the updated
+-- seen-keys mask to the continuation.
+decodeConwayTxBodyRawField ::
+  ConwayTxBodyRaw TopTx ConwayEra ->
+  Word64 ->
+  (ConwayTxBodyRaw TopTx ConwayEra -> Word64 -> Decoder s r) ->
+  Decoder s r
+decodeConwayTxBodyRawField tx seenKeys cont =
+  decodeWord >>= \txBodyKey ->
+    case txBodyKey of
+      0 ->
+        checkFreshTxBodyKey txBodyKey 0x1 seenKeys $
+          decCBOR >>= \x -> cont (tx {ctbrSpendInputs = x}) (seenKeys .|. 0x1)
+      1 ->
+        checkFreshTxBodyKey txBodyKey 0x2 seenKeys $
+          decCBOR >>= \x -> cont (tx {ctbrOutputs = x}) (seenKeys .|. 0x2)
+      2 ->
+        checkFreshTxBodyKey txBodyKey 0x4 seenKeys $
+          decCBOR >>= \x -> cont (tx {ctbrFee = x}) (seenKeys .|. 0x4)
+      3 ->
+        checkFreshTxBodyKey txBodyKey 0x8 seenKeys $
+          decCBOR >>= \x ->
+            cont
+              (tx {ctbrVldt = (ctbrVldt tx) {invalidHereafter = SJust x}})
+              (seenKeys .|. 0x8)
+      4 ->
+        checkFreshTxBodyKey txBodyKey 0x10 seenKeys $
+          decCBOR >>= \x ->
+            if OSet.null x
+              then fail (conwayTxBodyEmptyFailure "Certificates" "non-empty")
+              else cont (tx {ctbrCerts = x}) (seenKeys .|. 0x10)
+      5 ->
+        checkFreshTxBodyKey txBodyKey 0x20 seenKeys $
+          decCBOR >>= \x ->
+            if null (unWithdrawals x)
+              then fail (conwayTxBodyEmptyFailure "Withdrawals" "non-empty")
+              else cont (tx {ctbrWithdrawals = x}) (seenKeys .|. 0x20)
+      7 ->
+        checkFreshTxBodyKey txBodyKey 0x80 seenKeys $
+          decCBOR >>= \x -> cont (tx {ctbrAuxDataHash = SJust x}) (seenKeys .|. 0x80)
+      8 ->
+        checkFreshTxBodyKey txBodyKey 0x100 seenKeys $
+          decCBOR >>= \x ->
+            cont
+              (tx {ctbrVldt = (ctbrVldt tx) {invalidBefore = SJust x}})
+              (seenKeys .|. 0x100)
+      9 ->
+        checkFreshTxBodyKey txBodyKey 0x200 seenKeys $
+          decCBOR >>= \x ->
+            if x == mempty
+              then fail (conwayTxBodyEmptyFailure "Mint" "non-empty")
+              else cont (tx {ctbrMint = x}) (seenKeys .|. 0x200)
+      11 ->
+        checkFreshTxBodyKey txBodyKey 0x800 seenKeys $
+          decCBOR >>= \x -> cont (tx {ctbrScriptIntegrityHash = SJust x}) (seenKeys .|. 0x800)
+      13 ->
+        checkFreshTxBodyKey txBodyKey 0x2000 seenKeys $
+          decCBOR >>= \x ->
+            if null x
+              then fail (conwayTxBodyEmptyFailure "Collateral Inputs" "non-empty")
+              else cont (tx {ctbrCollateralInputs = x}) (seenKeys .|. 0x2000)
+      14 ->
+        checkFreshTxBodyKey txBodyKey 0x4000 seenKeys $
+          decCBOR >>= \x ->
+            if null x
+              then fail (conwayTxBodyEmptyFailure "Required Signer Hashes" "non-empty")
+              else cont (tx {ctbrReqSignerHashes = x}) (seenKeys .|. 0x4000)
+      15 ->
+        checkFreshTxBodyKey txBodyKey 0x8000 seenKeys $
+          decCBOR >>= \x -> cont (tx {ctbrNetworkId = SJust x}) (seenKeys .|. 0x8000)
+      16 ->
+        checkFreshTxBodyKey txBodyKey 0x10000 seenKeys $
+          decCBOR >>= \x -> cont (tx {ctbrCollateralReturn = SJust x}) (seenKeys .|. 0x10000)
+      17 ->
+        checkFreshTxBodyKey txBodyKey 0x20000 seenKeys $
+          decCBOR >>= \x -> cont (tx {ctbrTotalCollateral = SJust x}) (seenKeys .|. 0x20000)
+      18 ->
+        checkFreshTxBodyKey txBodyKey 0x40000 seenKeys $
+          decCBOR >>= \x ->
+            if null x
+              then fail (conwayTxBodyEmptyFailure "Reference Inputs" "non-empty")
+              else cont (tx {ctbrReferenceInputs = x}) (seenKeys .|. 0x40000)
+      19 ->
+        checkFreshTxBodyKey txBodyKey 0x80000 seenKeys $
+          decCBOR >>= \x ->
+            if null (unVotingProcedures x)
+              then fail (conwayTxBodyEmptyFailure "VotingProcedures" "non-empty")
+              else cont (tx {ctbrVotingProcedures = x}) (seenKeys .|. 0x80000)
+      20 ->
+        checkFreshTxBodyKey txBodyKey 0x100000 seenKeys $
+          decCBOR >>= \x ->
+            if OSet.null x
+              then fail (conwayTxBodyEmptyFailure "ProposalProcedures" "non-empty")
+              else cont (tx {ctbrProposalProcedures = x}) (seenKeys .|. 0x100000)
+      21 ->
+        checkFreshTxBodyKey txBodyKey 0x200000 seenKeys $
+          decCBOR >>= \x -> cont (tx {ctbrCurrentTreasuryValue = SJust x}) (seenKeys .|. 0x200000)
+      22 ->
+        checkFreshTxBodyKey txBodyKey 0x400000 seenKeys $
+          decodePositiveCoin (conwayTxBodyEmptyFailure "Treasury Donation" "non-zero") >>= \x ->
+            cont
+              (tx {ctbrTreasuryDonation = fromSMaybe zero (SJust x)})
+              (seenKeys .|. 0x400000)
+      _ -> absurd . snd <$> invalidKey @(Int, Void) txBodyKey
+{-# INLINE decodeConwayTxBodyRawField #-}
+
+conwayTxBodyEmptyFailure :: String -> String -> String
+conwayTxBodyEmptyFailure fieldName requirement =
+  "TxBody: '" <> fieldName <> "' must be " <> requirement <> " when supplied"
 
 instance Typeable l => DecCBOR (Annotator (ConwayTxBodyRaw l ConwayEra)) where
   decCBOR = pure <$> decCBOR
