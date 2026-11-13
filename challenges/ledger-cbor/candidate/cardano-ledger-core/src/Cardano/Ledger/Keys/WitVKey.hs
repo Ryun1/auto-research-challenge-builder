@@ -105,8 +105,14 @@ instance EncCBOR (WitVKey kr) where
 
 instance Typeable kr => DecCBOR (WitVKey kr) where
   decCBOR =
-    decodeRecordNamed "WitVKey" (const 2) $
-      WitVKey <$> decCBOR <*> decCBOR
+    decodeRecordNamed "WitVKey" (const 2) $ do
+      !vkey <- decCBOR
+      !sig <- decCBOR
+      -- The key hash is computed right away instead of being left as a thunk: it is
+      -- always demanded later (by the 'Ord' instance when building a 'Set', and by
+      -- 'rnf'), and hashing a decoded key cannot fail.
+      let !vkeyHash = asWitness $ hashKey vkey
+      pure $ WitVKeyInternal vkey sig vkeyHash
   {-# INLINE decCBOR #-}
 
 pattern WitVKey ::
