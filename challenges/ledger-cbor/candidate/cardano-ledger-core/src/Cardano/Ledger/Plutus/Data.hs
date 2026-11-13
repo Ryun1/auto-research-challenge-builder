@@ -300,12 +300,15 @@ instance Era era => EncCBOR (Datum era) where
 
 instance Era era => DecCBOR (Datum era) where
   decCBOR =
-    ifDecoderVersionAtLeast (natVersion @12) decodeDatumPv12 $
-      decode (Summands "Datum" decodeDatum)
+    ifDecoderVersionAtLeast (natVersion @12) decodeDatumPv12 decodeDatumPreV12
     where
-      decodeDatum 0 = SumD DatumHash <! From
-      decodeDatum 1 = SumD Datum <! From
-      decodeDatum k = Invalid k
+      -- Before protocol version 12 the Coders interpreter ran
+      -- @decode (Summands "Datum" ...)@ with @SumD DatumHash <! From@ for tag 0,
+      -- @SumD Datum <! From@ for tag 1 and @Invalid@ otherwise. That is
+      -- 'decodeRecordSum' over the tag, one 'decCBOR' for the field, and a declared
+      -- size of 2 checked after the field: the steps of 'decodeDatumPv12', in the
+      -- same order.
+      decodeDatumPreV12 = decodeDatumPv12
       decodeDatumPv12 = decodeRecordSum "Datum" $ \case
         0 -> do
           dh <- decCBOR
