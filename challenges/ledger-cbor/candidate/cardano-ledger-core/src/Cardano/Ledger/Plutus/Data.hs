@@ -43,10 +43,12 @@ import Cardano.Ledger.BaseTypes (StrictMaybe (..))
 import Cardano.Ledger.Binary (
   Annotator,
   DecCBOR (..),
+  Decoder,
   DecoderError (..),
   EncCBOR (..),
   ToCBOR (..),
   decodeFullAnnotator,
+  decodeFullDecoder',
   decodeNestedCborBytes,
   encodeTag,
   fromPlainDecoder,
@@ -218,7 +220,17 @@ instance EncCBOR (BinaryData era) where
 instance Era era => DecCBOR (BinaryData era) where
   decCBOR = do
     bs <- decodeNestedCborBytes
-    either fail pure $! makeBinaryData (toShort bs)
+    -- The same check as 'makeBinaryData', without building the memoised
+    -- 'Data' it discards: the 'Annotator' decoder of 'PlutusData' is
+    -- 'decodePlainData' under 'withSlice', which adds no failure, so this
+    -- accepts and rejects exactly the same bytes, with the same error.
+    case decodeFullDecoder' (eraProtVerLow @era) "PlutusData" decodePlainData bs of
+      Left e -> fail $ "Invalid CBOR for Data: " <> show e
+      Right _d -> pure $! BinaryData (toShort bs)
+
+-- | The plain 'PV1.Data' decoder, the one 'DecCBOR (Annotator (PlutusData era))' wraps.
+decodePlainData :: Decoder s PV1.Data
+decodePlainData = fromPlainDecoder Cborg.decode
 
 -- | Construct `BinaryData` from a buffer of bytes, while ensuring that it can be later
 -- safely converted to `Data` with `binaryDataToData`

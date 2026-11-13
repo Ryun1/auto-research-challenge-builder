@@ -501,6 +501,7 @@ enforceDecoderVersion version d =
 
 decodeBytesDefinite :: Decoder s ByteString
 decodeBytesDefinite = directPrim Plain.decodeBytes dBytes
+{-# INLINE decodeBytesDefinite #-}
 
 -- | Decode a bytestring, accepting both definite and indefinite length encodings. Chunks
 -- of an indefinite length bytestring are concatenated together.
@@ -510,9 +511,11 @@ decodeBytes =
     (natVersion @12)
     decodeBytesDefOrIndef
     decodeBytesDefinite
+{-# INLINE decodeBytes #-}
 
 decodeFixedSized :: FSC.FixedSizeCodec a => Decoder s a
 decodeFixedSized = FSC.rawDecodeFixedSized =<< decodeBytes
+{-# INLINE decodeFixedSized #-}
 
 -- | Lookup the original bytes that are being used for deserialization. This action will
 -- fail deserialization whenever original bytes are not available.
@@ -1580,6 +1583,7 @@ decodeBreakOr = directPrim C.decodeBreakOr dBreakOr
 
 decodeByteArrayDefinite :: Decoder s ByteArray
 decodeByteArrayDefinite = directPrim C.decodeByteArray dByteArray
+{-# INLINE decodeByteArrayDefinite #-}
 
 decodeByteArray :: Decoder s ByteArray
 decodeByteArray =
