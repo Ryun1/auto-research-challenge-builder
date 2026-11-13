@@ -88,9 +88,11 @@ import Cardano.Ledger.Binary (
   decodeBreakOr,
   decodeFullAnnotator,
   decodeListLenOrIndef,
+  decodeMapLenOrIndef,
   decodeMemPack,
   decodeNestedCborBytes,
   decodeSparseKeyed,
+  decodeWord,
   encodeListLen,
   encodeNestedCbor,
   getDecoderVersion,
@@ -114,11 +116,13 @@ import Cardano.Ledger.Val (Val (..))
 import Control.DeepSeq (NFData (rnf), rwhnf)
 import Data.Aeson (FromJSON (..), ToJSON (..), (.:), (.=))
 import qualified Data.Aeson as Aeson
+import Data.Bits (setBit, testBit)
 import qualified Data.ByteString.Lazy as LBS
 import Data.Maybe (fromMaybe)
 import Data.MemPack
+import qualified Data.Set as Set
 import qualified Data.Text as T
-import Data.Typeable (Proxy (..))
+import Data.Typeable (Proxy (..), typeOf)
 import GHC.Generics (Generic)
 import GHC.Stack (HasCallStack)
 import Lens.Micro (Lens', lens, to, (^.))
@@ -589,7 +593,7 @@ decodeBabbageTxOut decAddr = do
           pure $ mkTxOut a ca v (DatumHash dh) SNothing
         Just _ -> cborError $ DecoderErrorCustom "TxOut" "Wrong number of terms in TxOut"
     {-# INLINE oldTxOut #-}
-{-# INLINEABLE decodeBabbageTxOut #-}
+{-# INLINE decodeBabbageTxOut #-}
 
 encodeTxOut ::
   forall era.
@@ -625,7 +629,7 @@ decodeTxOut decAddr = do
     ifDecoderVersionAtLeast
       (natVersion @12)
       (decodeSparseKeyed TypeName requiredFields initial decoderByKey)
-      (decode $ SparseKeyed "TxOut" initial bodyFields requiredFields)
+      decodeFieldsPreV12
   case dtxo of
     DecodingTxOut SNothing _ _ _ ->
       cborError $ DecoderErrorCustom "BabbageTxOut" "Impossible: no Addr"
@@ -650,25 +654,113 @@ decodeTxOut decAddr = do
         pure txOut {decodingTxOutScript = SJust x}
       _ -> Nothing
     {-# INLINE decoderByKey #-}
-    bodyFields :: (Word -> Field (DecodingTxOut era))
-    bodyFields 0 =
-      field
-        (\x txOut -> txOut {decodingTxOutAddr = SJust x})
-        (D decAddr)
-    bodyFields 1 =
-      field
-        (\x txOut -> txOut {decodingTxOutVal = x})
-        From
-    bodyFields 2 =
-      field
-        (\x txOut -> txOut {decodingTxOutDatum = x})
-        (D decCBOR)
-    bodyFields 3 =
-      ofield
-        (\x txOut -> txOut {decodingTxOutScript = x})
-        (D $ decodeCIC "Script")
-    bodyFields n = invalidField n
-    {-# INLINE bodyFields #-}
+    -- Before protocol version 12 this is exactly what
+    -- @decode (SparseKeyed "TxOut" initial bodyFields requiredFields)@ did, with
+    -- @bodyFields@ mapping key 0 to @D decAddr@, 1 to @From@, 2 to @D decCBOR@,
+    -- 3 to @SJust <$> decodeCIC "Script"@ and every other key to @invalidField@,
+    -- without the Coders interpreter:
+    --
+    -- (1) the map header is read with decodeMapLenOrIndef; a definite map reads
+    --   exactly that many key/value pairs, an indefinite one reads pairs until
+    --   decodeBreakOr finds the break;
+    -- (2) per pair the key is read with decodeWord, then a key that was already
+    --   seen fails with duplicateKey "TxOut" before its value is touched, an
+    --   unknown key (never recorded as seen, since it fails) fails like
+    --   invalidKey did, and a known key decodes its value with the same decoder;
+    -- (3) decoded values are kept as they come (the interpreter applied lazy
+    --   update closures); the record is forced once after the map, and only
+    --   then are the required keys 0 and 1 checked, failing with
+    --   unusedRequiredKeys as before.
+    --
+    -- The seen keys are a bitmask (bit k for key k, k <= 3) instead of a Set.
+    decodeFieldsPreV12 :: Decoder s (DecodingTxOut era)
+    decodeFieldsPreV12 =
+      decodeMapLenOrIndef >>= \case
+        Just mapLen -> fieldsDef mapLen 0 SNothing mempty NoDatum SNothing
+        Nothing -> fieldsIndef 0 SNothing mempty NoDatum SNothing
+    {-# INLINE decodeFieldsPreV12 #-}
+    fieldsDef ::
+      Int ->
+      Word ->
+      StrictMaybe (Addr, CompactAddr) ->
+      Value era ->
+      Datum era ->
+      StrictMaybe (Script era) ->
+      Decoder s (DecodingTxOut era)
+    fieldsDef 0 !keysSeen addrF valF datumF scriptF =
+      fieldsDone keysSeen addrF valF datumF scriptF
+    fieldsDef remaining !keysSeen addrF valF datumF scriptF =
+      let !remaining' = remaining - 1
+       in decodeField keysSeen addrF valF datumF scriptF (fieldsDef remaining')
+    fieldsIndef ::
+      Word ->
+      StrictMaybe (Addr, CompactAddr) ->
+      Value era ->
+      Datum era ->
+      StrictMaybe (Script era) ->
+      Decoder s (DecodingTxOut era)
+    fieldsIndef !keysSeen addrF valF datumF scriptF =
+      decodeBreakOr >>= \case
+        True -> fieldsDone keysSeen addrF valF datumF scriptF
+        False -> decodeField keysSeen addrF valF datumF scriptF fieldsIndef
+    decodeField ::
+      Word ->
+      StrictMaybe (Addr, CompactAddr) ->
+      Value era ->
+      Datum era ->
+      StrictMaybe (Script era) ->
+      ( Word ->
+        StrictMaybe (Addr, CompactAddr) ->
+        Value era ->
+        Datum era ->
+        StrictMaybe (Script era) ->
+        Decoder s (DecodingTxOut era)
+      ) ->
+      Decoder s (DecodingTxOut era)
+    decodeField keysSeen addrF valF datumF scriptF kont = do
+      fieldKey <- decodeWord
+      case fieldKey of
+        0
+          | keysSeen `testBit` 0 -> duplicateKey "TxOut" fieldKey
+          | otherwise -> do
+              x <- decAddr
+              kont (keysSeen `setBit` 0) (SJust x) valF datumF scriptF
+        1
+          | keysSeen `testBit` 1 -> duplicateKey "TxOut" fieldKey
+          | otherwise -> do
+              x <- decCBOR
+              kont (keysSeen `setBit` 1) addrF x datumF scriptF
+        2
+          | keysSeen `testBit` 2 -> duplicateKey "TxOut" fieldKey
+          | otherwise -> do
+              x <- decCBOR
+              kont (keysSeen `setBit` 2) addrF valF x scriptF
+        3
+          | keysSeen `testBit` 3 -> duplicateKey "TxOut" fieldKey
+          | otherwise -> do
+              x <- decodeCIC "Script"
+              kont (keysSeen `setBit` 3) addrF valF datumF (SJust x)
+        _ ->
+          -- the message invalidKey produced for the interpreter's (Int, Void) field
+          cborError $ DecoderErrorCustom "(Int,Void) not a valid key:" (T.pack (show fieldKey))
+    {-# INLINE decodeField #-}
+    fieldsDone ::
+      Word ->
+      StrictMaybe (Addr, CompactAddr) ->
+      Value era ->
+      Datum era ->
+      StrictMaybe (Script era) ->
+      Decoder s (DecodingTxOut era)
+    fieldsDone keysSeen addrF valF datumF scriptF = do
+      let !decoded = DecodingTxOut addrF valF datumF scriptF
+      if keysSeen `testBit` 0 && keysSeen `testBit` 1
+        then pure decoded
+        else
+          unusedRequiredKeys
+            (Set.fromList (filter (testBit keysSeen . fromIntegral) [0 .. 3]))
+            requiredFields
+            (show (typeOf initial))
+    requiredFields :: [(Word, String)]
     requiredFields =
       [ (0, "addr")
       , (1, "val")
