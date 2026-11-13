@@ -1121,11 +1121,14 @@ decodeListLikeWithCount ::
 -- decodeListLikeWithCount decodeLenOrIndef insert decodeElement =
 --   runIndentityT $ decodeListLikeWithCountT (lift decodeLenOrIndef) insert (lift decodeElement)
 -- and add a SPECIALIZE pragma
-decodeListLikeWithCount decodeLenOrIndef insert decodeElement = do
-  decodeLenOrIndef >>= \case
-    Just len -> loop (\x -> pure (x >= len)) 0 mempty
-    Nothing -> loop (\_ -> decodeBreakOr) 0 mempty
+decodeListLikeWithCount decodeLenOrIndef insert decodeElement =
+  Decoder (runDecoder generic) direct
   where
+    generic :: Decoder s (Int, b)
+    generic =
+      decodeLenOrIndef >>= \case
+        Just len -> loop (\x -> pure (x >= len)) 0 mempty
+        Nothing -> loop (\_ -> decodeBreakOr) 0 mempty
     loop :: (Int -> Decoder s Bool) -> Int -> b -> Decoder s (Int, b)
     loop condition = go
       where
@@ -1137,6 +1140,33 @@ decodeListLikeWithCount decodeLenOrIndef insert decodeElement = do
               element <- decodeElement acc
               go (count + 1) (insert element acc)
     {-# INLINE loop #-}
+    -- The direct form of `generic`, written out as a loop over the offset: the same
+    -- steps in the same order (length, then per element the stop test, the element
+    -- and the insert, with count and accumulator forced on entry as `go` does), but
+    -- without building a `Decoder` per iteration.
+    direct :: Version -> ByteString -> Int -> ST s (DRes (Int, b))
+    direct v bs off0 =
+      runDirect decodeLenOrIndef v bs off0 >>= \case
+        DBail -> pure DBail
+        DOk off1 (Just len) -> goN len 0 mempty off1
+        DOk off1 Nothing -> goIndef 0 mempty off1
+      where
+        goN :: Int -> Int -> b -> Int -> ST s (DRes (Int, b))
+        goN len !count !acc !off
+          | count >= len = pure (DOk off (count, acc))
+          | otherwise =
+              runDirect (decodeElement acc) v bs off >>= \case
+                DBail -> pure DBail
+                DOk off' element -> goN len (count + 1) (insert element acc) off'
+        goIndef :: Int -> b -> Int -> ST s (DRes (Int, b))
+        goIndef !count !acc !off =
+          runDirect decodeBreakOr v bs off >>= \case
+            DBail -> pure DBail
+            DOk off' True -> pure (DOk off' (count, acc))
+            DOk off' False ->
+              runDirect (decodeElement acc) v bs off' >>= \case
+                DBail -> pure DBail
+                DOk off'' element -> goIndef (count + 1) (insert element acc) off''
 {-# INLINE decodeListLikeWithCount #-}
 
 decodeListLikeWithCountT ::
