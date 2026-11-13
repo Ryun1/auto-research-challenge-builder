@@ -149,7 +149,7 @@ pub fn feed(root: &Path, slug: &str, url: &str, generated_at: &str) -> Result<Va
             "metric": spec.objective.expr,
             "min_improvement_bips": bips,
             "statistic": statistic,
-            "pairing": "two independent runs on main must agree within half the bar",
+            "pairing": "two independent runs on main must both clear the bar, or both miss it",
             "baseline": baseline,
         },
         "policy": {
