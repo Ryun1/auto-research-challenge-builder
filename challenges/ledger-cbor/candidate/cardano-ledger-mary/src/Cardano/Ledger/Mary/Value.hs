@@ -656,12 +656,29 @@ to (MaryValue ada (MultiAsset m))
   | Map.null m = CompactValueAdaOnly <$> toCompact ada
 to (MaryValue ada ma@(MultiAsset m)) = do
   c <- assert (isMultiAssetSmallEnough ma) (toCompact ada)
-  -- Every quantity must fit in a Word64, or the result is Nothing.
-  forM_ usedPolicies $ \(_, assets) -> forM_ assets integerToWord64
+  -- One (asset name offset, pid offset, quantity) per asset, in the order
+  -- flattenMultiAsset lists them: ascending policy, then ascending asset name.
+  -- If any of the quantities is out of bounds, this produces Nothing.
+  prepared <- traverse prepare flatEntries
+  -- Written ordered by asset name offset, ascending, which is asset name
+  -- descending (see assetNames); sortBy is stable, so entries sharing an asset
+  -- name keep ascending policy order. This is the order the triples-based
+  -- builder produced with sortOn on the same offsets.
+  let ordered = zip [0 ..] (sortBy (comparing (\(anoff, _, _) -> anoff)) prepared)
   pure $
     CompactValueMultiAsset c (fromIntegral numTriples) $
       runST $ do
         byteArray <- BA.newByteArray repSize
+        forM_ ordered $ \(i, (anoff, pidoff, q)) ->
+          do
+            -- Region A (quantities) starts at byte 0, region B (pid offsets) at
+            -- byte 8n and region C (asset name offsets) at byte 10n, where n is
+            -- the number of triples. writeByteArray indexes in units of the
+            -- written type: Word64 at i, Word16 at 4n + i and 5n + i.
+            BA.writeByteArray byteArray i q
+            BA.writeByteArray byteArray (4 * numTriples + i) pidoff
+            BA.writeByteArray byteArray (5 * numTriples + i) anoff
+
         forM_ (zip [0 ..] usedPolicies) $
           \(k, (PolicyID (ScriptHash sh), _)) ->
             let pidBytes = Hash.hashToBytesShort sh
@@ -671,39 +688,21 @@ to (MaryValue ada ma@(MultiAsset m)) = do
                   (byteArrayFromShortByteString pidBytes)
                   0
                   pidSize
-        -- One pass over the entries in representation order. Equal asset
-        -- names are adjacent, so a name's bytes are written (region E) and its
-        -- offset fixed the first time it is seen; later entries with the same
-        -- name reuse that offset. Region E thus holds the distinct names in
-        -- descending order at their running offsets, the empty name (if any)
-        -- last, pointing at the end of the representation.
-        let go _ _ _ _ [] = pure ()
-            go i nextOff prevName prevOff ((AssetName an, k, q) : rest)
-              | i > 0 && an == prevName = do
-                  writeEntry i k q prevOff
-                  go (i + 1) nextOff prevName prevOff rest
-              | otherwise = do
-                  let anLen = SBS.length an
-                  BA.copyByteArray
-                    byteArray
-                    nextOff
-                    (byteArrayFromShortByteString an)
-                    0
-                    anLen
-                  writeEntry i k q nextOff
-                  go (i + 1) (nextOff + anLen) an nextOff rest
-            -- Region A (quantities) starts at byte 0, region B (pid offsets)
-            -- at byte 8n and region C (asset name offsets) at byte 10n, where
-            -- n is the number of triples. writeByteArray indexes in units of
-            -- the written type: Word64 at i, Word16 at 4n + i and 5n + i.
-            writeEntry i k q anoff = do
-              BA.writeByteArray byteArray i (fromIntegral q :: Word64)
-              BA.writeByteArray byteArray (4 * numTriples + i) (pidOffset k)
-              BA.writeByteArray byteArray (5 * numTriples + i) (fromIntegral anoff :: Word16)
-        go (0 :: Int) (abcRegionSize + pidBlockSize) SBS.empty (0 :: Int) entries
+
+        forM_ (Map.toList assetNameOffsetMap) $
+          \(AssetName anameBS, offset) ->
+            let anameBytes = anameBS
+                anameLen = SBS.length anameBS
+             in BA.copyByteArray
+                  byteArray
+                  (fromIntegral offset)
+                  (byteArrayFromShortByteString anameBytes)
+                  0
+                  anameLen
         byteArrayToShortByteString <$> BA.unsafeFreezeByteArray byteArray
   where
-    -- The policies that contribute at least one asset, ascending.
+    -- The policies that contribute at least one asset, ascending. These are
+    -- exactly the distinct pids of flattenMultiAsset, in Set order.
     usedPolicies :: [(PolicyID, Map AssetName Integer)]
     usedPolicies = [(pid, assets) | (pid, assets) <- Map.toAscList m, not (Map.null assets)]
 
@@ -724,39 +723,39 @@ to (MaryValue ada ma@(MultiAsset m)) = do
 
     pidBlockSize = length usedPolicies * pidSize
 
-    -- (asset name, policy index, quantity), one per asset, in representation
-    -- order: asset name descending, then policy ascending. Each policy's
-    -- assets are already a descending run, so a single policy needs no sort,
-    -- and for several sortBy merges the runs. The key (name, policy index) is
-    -- unique, so this is exactly the order of the triples-based builder
-    -- (stable sort on the asset name offset over ascending-policy,
-    -- ascending-name flatten order).
-    entries :: [(AssetName, Int, Integer)]
-    entries = case perPolicy of
-      [one] -> one
-      runs -> sortBy cmpEntry (concat runs)
+    -- Putting asset names in descending order ensures that the empty string
+    -- is last, so the associated offset is pointing to the end of the array
+    assetNames :: [AssetName]
+    assetNames = Set.toDescList $ Set.unions (Map.keysSet . snd <$> usedPolicies)
 
-    perPolicy :: [[(AssetName, Int, Integer)]]
-    perPolicy =
-      [ [(aname, k, q) | (aname, q) <- Map.toDescList assets]
-      | (k, (_, assets)) <- zip [0 ..] usedPolicies
-      ]
+    assetNameLengths :: [Int]
+    assetNameLengths = SBS.length . assetNameBytes <$> assetNames
 
-    cmpEntry (a1, k1, _) (a2, k2, _) = compare a2 a1 <> compare k1 k2
+    assetNameOffsetMap :: Map AssetName Word16
+    assetNameOffsetMap =
+      -- The asset name offsets are the running sum of the asset lengths,
+      -- but starting with the offset of the start of block E. The names are
+      -- distinct and descending.
+      let offsets = scanl (+) (abcRegionSize + pidBlockSize) assetNameLengths
+       in Map.fromDistinctDescList (zip assetNames (fromIntegral <$> offsets))
 
-    -- Region E holds each distinct asset name once.
-    anameBlockSize :: Int
-    anameBlockSize = case entries of
-      [] -> 0
-      (AssetName a0, _, _) : rest0 -> goLen (SBS.length a0) a0 rest0
-      where
-        goLen acc _ [] = acc
-        goLen acc prev ((AssetName a, _, _) : rest)
-          | a == prev = goLen acc prev rest
-          | otherwise = let acc' = acc + SBS.length a in acc' `seq` goLen acc' a rest
+    assetNameOffset aname = fromJust (Map.lookup aname assetNameOffsetMap)
+
+    anameBlockSize = sum assetNameLengths
 
     -- size = size(A+B+C)      + size(D)      + size(E)
     repSize = abcRegionSize + pidBlockSize + anameBlockSize
+
+    flatEntries :: [(Word16, Word16, Integer)]
+    flatEntries =
+      [ (assetNameOffset aname, pidOffset k, q)
+      | (k, (_, assets)) <- zip [0 ..] usedPolicies
+      , (aname, q) <- Map.toAscList assets
+      ]
+
+    prepare (anoff, pidoff, q) = do
+      q' <- integerToWord64 q
+      pure (anoff, pidoff, q')
 
 -- | Unlike `representationSize`, this function cheaply checks whether
 -- any offset within a MultiAsset compact representation is likely to overflow Word16.

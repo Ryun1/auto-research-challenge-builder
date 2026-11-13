@@ -78,7 +78,6 @@ import Cardano.Ledger.Binary (
   TokenType (..),
   allowTag,
   decodeAccA,
-  decodeBreakOr,
   decodeList,
   decodeListLenOrIndef,
   decodeListLikeWithCount,
@@ -88,7 +87,6 @@ import Cardano.Ledger.Binary (
   decodeNonEmptySetLikeEnforceNoDuplicates,
   decodeNonEmptySetLikeEnforceNoDuplicatesAnn,
   decodeSparseKeyed,
-  decodeWord,
   encodeFoldableEncoder,
   encodeListLen,
   encodeTag,
@@ -132,7 +130,6 @@ import Control.Monad (when, (>=>))
 import Control.Monad.Trans.Fail (runFail)
 import Data.Aeson (FromJSON (..), ToJSON (..), object, withArray, withObject, (.:), (.=))
 import qualified Data.Aeson as Aeson
-import Data.Bits (setBit, testBit)
 import Data.Coerce (coerce)
 import qualified Data.Foldable as Foldable
 import qualified Data.List.NonEmpty as NE
@@ -143,7 +140,6 @@ import qualified Data.MapExtras as Map (fromElems)
 import Data.Maybe (mapMaybe)
 import Data.Set (Set)
 import qualified Data.Set as Set
-import Data.Void (absurd)
 import GHC.Generics (Generic)
 import Lens.Micro
 import NoThunks.Class (NoThunks)
@@ -643,7 +639,7 @@ instance
     ifDecoderVersionAtLeast
       (natVersion @12)
       (decodeSparseKeyed TypeName [] (pure emptyTxWitsRaw) decoderByKey)
-      decodeTxWitsPreV12
+      (decode $ SparseKeyed "AlonzoTxWits" (pure emptyTxWitsRaw) txWitnessField [])
     where
       addrWitsSetDecoder :: (Ord a, DecCBOR a) => Decoder s (Set a)
       addrWitsSetDecoder = do
@@ -683,64 +679,33 @@ instance
         _ -> Nothing
       {-# INLINE decoderByKey #-}
 
-      -- Before protocol version 12 the witness set is a sparse map with keys 0-7. This is a
-      -- direct rendering of what the Coders interpreter
-      -- @decode (SparseKeyed "AlonzoTxWits" (pure emptyTxWitsRaw) field [])@ did: for every
-      -- entry read the key with 'decodeWord', fail with 'duplicateKey' on a key already
-      -- seen, fail with 'invalidKey' on any key outside 0-7 (key 8, PlutusV4, is only valid
-      -- starting with PV 12), otherwise decode the value with the same field decoder and
-      -- combine it into the accumulator exactly like the Coders 'Field' did
-      -- (@liftA2 update value acc@). The set of keys seen is a bit mask, since only keys
-      -- 0-7 can ever be recorded in it.
-      decodeTxWitsPreV12 :: Decoder s (Annotator (AlonzoTxWitsRaw era))
-      decodeTxWitsPreV12 =
-        decodeMapLenOrIndef >>= \case
-          Just wlen -> decodeTxWitsLenPreV12 wlen 0 (pure emptyTxWitsRaw)
-          Nothing -> decodeTxWitsIndefPreV12 0 (pure emptyTxWitsRaw)
-      {-# INLINE decodeTxWitsPreV12 #-}
-
-      decodeTxWitsLenPreV12 ::
-        Int ->
-        Word ->
-        Annotator (AlonzoTxWitsRaw era) ->
-        Decoder s (Annotator (AlonzoTxWitsRaw era))
-      decodeTxWitsLenPreV12 0 !_ !wacc = pure wacc
-      decodeTxWitsLenPreV12 remaining !wseen !wacc = do
-        wkey <- decodeWord
-        wacc' <- decodeTxWitsFieldPreV12 wseen wacc wkey
-        decodeTxWitsLenPreV12 (remaining - 1) (setBit wseen (fromIntegral wkey)) wacc'
-
-      decodeTxWitsIndefPreV12 ::
-        Word ->
-        Annotator (AlonzoTxWitsRaw era) ->
-        Decoder s (Annotator (AlonzoTxWitsRaw era))
-      decodeTxWitsIndefPreV12 !wseen !wacc =
-        decodeBreakOr >>= \case
-          True -> pure wacc
-          False -> do
-            wkey <- decodeWord
-            wacc' <- decodeTxWitsFieldPreV12 wseen wacc wkey
-            decodeTxWitsIndefPreV12 (setBit wseen (fromIntegral wkey)) wacc'
-
-      decodeTxWitsFieldPreV12 ::
-        Word ->
-        Annotator (AlonzoTxWitsRaw era) ->
-        Word ->
-        Decoder s (Annotator (AlonzoTxWitsRaw era))
-      decodeTxWitsFieldPreV12 wseen wacc wkey
-        | wkey <= 7 && testBit wseen (fromIntegral wkey) = duplicateKey "AlonzoTxWits" wkey
-        | otherwise =
-            case wkey of
-              0 -> decodeAccA wacc (\x w -> w {atwrAddrTxWits = x}) (pure <$> setOrListWitsDecoder)
-              1 -> decodeAccA wacc addScriptsTxWitsRaw nativeScriptsDecoder
-              2 -> decodeAccA wacc (\x w -> w {atwrBootAddrTxWits = x}) (pure <$> setOrListWitsDecoder)
-              3 -> decodeAccA wacc addScriptsTxWitsRaw (pure <$> alonzoPlutusScriptDecoder SPlutusV1)
-              4 -> decodeAccA wacc (\x w -> w {atwrDatsTxWits = x}) decCBOR
-              5 -> decodeAccA wacc (\x w -> w {atwrRdmrsTxWits = x}) decCBOR
-              6 -> decodeAccA wacc addScriptsTxWitsRaw (pure <$> alonzoPlutusScriptDecoder SPlutusV2)
-              7 -> decodeAccA wacc addScriptsTxWitsRaw (pure <$> alonzoPlutusScriptDecoder SPlutusV3)
-              _ -> absurd <$> invalidKey wkey
-      {-# INLINE decodeTxWitsFieldPreV12 #-}
+      txWitnessField :: Word -> Field (Annotator (AlonzoTxWitsRaw era))
+      txWitnessField 0 =
+        fieldA
+          (\x wits -> wits {atwrAddrTxWits = x})
+          ( D $
+              ifDecoderVersionAtLeast
+                (natVersion @9)
+                addrWitsSetDecoder
+                (Set.fromList <$> decodeList decCBOR)
+          )
+      txWitnessField 1 = fieldAA addScriptsTxWitsRaw (D nativeScriptsDecoder)
+      txWitnessField 2 =
+        fieldA
+          (\x wits -> wits {atwrBootAddrTxWits = x})
+          ( D $
+              ifDecoderVersionAtLeast
+                (natVersion @9)
+                addrWitsSetDecoder
+                (Set.fromList <$> decodeList decCBOR)
+          )
+      txWitnessField 3 = fieldA addScriptsTxWitsRaw (decodeAlonzoPlutusScript SPlutusV1)
+      txWitnessField 4 = fieldAA (\x wits -> wits {atwrDatsTxWits = x}) From
+      txWitnessField 5 = fieldAA (\x wits -> wits {atwrRdmrsTxWits = x}) From
+      txWitnessField 6 = fieldA addScriptsTxWitsRaw (decodeAlonzoPlutusScript SPlutusV2)
+      txWitnessField 7 = fieldA addScriptsTxWitsRaw (decodeAlonzoPlutusScript SPlutusV3)
+      txWitnessField n = invalidField n
+      {-# INLINE txWitnessField #-}
 
       hashedNativeSciptDecoder :: Decoder s (Annotator (ScriptHash, Script era))
       hashedNativeSciptDecoder = fmap (asHashedScriptPair @era . fromNativeScript) <$> decCBOR

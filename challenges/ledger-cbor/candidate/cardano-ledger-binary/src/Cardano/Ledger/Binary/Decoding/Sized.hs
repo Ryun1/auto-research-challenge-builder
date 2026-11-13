@@ -1,4 +1,3 @@
-{-# LANGUAGE BangPatterns #-}
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE NamedFieldPuns #-}
 {-# LANGUAGE RankNTypes #-}
@@ -12,8 +11,9 @@ module Cardano.Ledger.Binary.Decoding.Sized (
   unsafeMapSized,
 ) where
 
+import Cardano.Ledger.Binary.Decoding.Annotated (Annotated (..), ByteSpan (..), annotatedDecoder)
 import Cardano.Ledger.Binary.Decoding.DecCBOR (DecCBOR (decCBOR))
-import Cardano.Ledger.Binary.Decoding.Decoder (Decoder, peekByteOffset)
+import Cardano.Ledger.Binary.Decoding.Decoder (Decoder)
 import Cardano.Ledger.Binary.Encoding (serialize)
 import Cardano.Ledger.Binary.Encoding.EncCBOR (EncCBOR (encCBOR))
 import Cardano.Ledger.Binary.Version (Version)
@@ -63,13 +63,7 @@ mkSized version a =
 
 decodeSized :: Decoder s a -> Decoder s (Sized a)
 decodeSized decoder = do
-  -- The same two offset peeks around the decoder that annotatedDecoder (via
-  -- cborg's decodeWithByteSpan) made, without its intermediate triple,
-  -- Annotated and ByteSpan. As before, the value is forced (by the strict
-  -- field of Sized, previously of Annotated) only after the second peek.
-  !start <- peekByteOffset
-  v <- decoder
-  !end <- peekByteOffset
+  Annotated v (ByteSpan start end) <- annotatedDecoder decoder
   pure $! Sized v $! end - start
 {-# INLINE decodeSized #-}
 

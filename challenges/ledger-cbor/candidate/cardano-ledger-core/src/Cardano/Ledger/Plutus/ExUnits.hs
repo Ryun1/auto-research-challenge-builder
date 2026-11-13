@@ -36,15 +36,12 @@ import Cardano.Ledger.Binary (
   DecoderError (..),
   EncCBOR (encCBOR),
   cborError,
-  decodeBreakOr,
-  decodeListLenOrIndef,
   decodeRecordNamed,
   ifDecoderVersionAtLeast,
-  matchSize,
   natVersion,
  )
 import Cardano.Ledger.Binary.Coders (
-  Decode (From, RecD),
+  Decode (D, From, RecD),
   Encode (Rec, To),
   decode,
   encode,
@@ -54,7 +51,7 @@ import Cardano.Ledger.Binary.Coders (
 import Cardano.Ledger.Coin (Coin (..))
 import Control.Applicative ((<|>))
 import Control.DeepSeq (NFData (..))
-import Control.Monad (unless, when)
+import Control.Monad (when)
 import Data.Aeson (
   FromJSON (..),
   ToJSON (..),
@@ -210,22 +207,10 @@ instance EncCBOR ExUnits where
 
 instance DecCBOR ExUnits where
   decCBOR =
-    ifDecoderVersionAtLeast (natVersion @12) decodeExUnits decodeExUnitsPreV12
+    ifDecoderVersionAtLeast (natVersion @12) decodeExUnits $
+      decode $
+        RecD ExUnits <! D decNat <! D decNat
     where
-      -- Before protocol version 12 this is what the Coders interpreter did for
-      -- @decode (RecD ExUnits <! D decNat <! D decNat)@: the list header is read and
-      -- checked first (a definite length must be 2; an indefinite list must have its
-      -- break right after the header), and only then are the two fields decoded.
-      decodeExUnitsPreV12 = do
-        lenOrIndef <- decodeListLenOrIndef
-        case lenOrIndef of
-          Just n -> matchSize "Record RecD" n 2
-          Nothing -> do
-            isBreak <- decodeBreakOr
-            unless isBreak $ cborError $ DecoderErrorCustom "RecD" "Excess terms in array"
-        memUnits <- decNat
-        stepUnits <- decNat
-        pure $! ExUnits memUnits stepUnits
       decodeExUnits =
         decodeRecordNamed "ExUnits" (const 2) $
           ExUnits <$> decNat <*> decNat

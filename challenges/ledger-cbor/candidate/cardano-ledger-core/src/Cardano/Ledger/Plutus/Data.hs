@@ -43,12 +43,10 @@ import Cardano.Ledger.BaseTypes (StrictMaybe (..))
 import Cardano.Ledger.Binary (
   Annotator,
   DecCBOR (..),
-  Decoder,
   DecoderError (..),
   EncCBOR (..),
   ToCBOR (..),
   decodeFullAnnotator,
-  decodeFullDecoder',
   decodeNestedCborBytes,
   encodeTag,
   fromPlainDecoder,
@@ -220,17 +218,7 @@ instance EncCBOR (BinaryData era) where
 instance Era era => DecCBOR (BinaryData era) where
   decCBOR = do
     bs <- decodeNestedCborBytes
-    -- The same check as 'makeBinaryData', without building the memoised
-    -- 'Data' it discards: the 'Annotator' decoder of 'PlutusData' is
-    -- 'decodePlainData' under 'withSlice', which adds no failure, so this
-    -- accepts and rejects exactly the same bytes, with the same error.
-    case decodeFullDecoder' (eraProtVerLow @era) "PlutusData" decodePlainData bs of
-      Left e -> fail $ "Invalid CBOR for Data: " <> show e
-      Right _d -> pure $! BinaryData (toShort bs)
-
--- | The plain 'PV1.Data' decoder, the one 'DecCBOR (Annotator (PlutusData era))' wraps.
-decodePlainData :: Decoder s PV1.Data
-decodePlainData = fromPlainDecoder Cborg.decode
+    either fail pure $! makeBinaryData (toShort bs)
 
 -- | Construct `BinaryData` from a buffer of bytes, while ensuring that it can be later
 -- safely converted to `Data` with `binaryDataToData`
@@ -312,15 +300,12 @@ instance Era era => EncCBOR (Datum era) where
 
 instance Era era => DecCBOR (Datum era) where
   decCBOR =
-    ifDecoderVersionAtLeast (natVersion @12) decodeDatumPv12 decodeDatumPreV12
+    ifDecoderVersionAtLeast (natVersion @12) decodeDatumPv12 $
+      decode (Summands "Datum" decodeDatum)
     where
-      -- Before protocol version 12 the Coders interpreter ran
-      -- @decode (Summands "Datum" ...)@ with @SumD DatumHash <! From@ for tag 0,
-      -- @SumD Datum <! From@ for tag 1 and @Invalid@ otherwise. That is
-      -- 'decodeRecordSum' over the tag, one 'decCBOR' for the field, and a declared
-      -- size of 2 checked after the field: the steps of 'decodeDatumPv12', in the
-      -- same order.
-      decodeDatumPreV12 = decodeDatumPv12
+      decodeDatum 0 = SumD DatumHash <! From
+      decodeDatum 1 = SumD Datum <! From
+      decodeDatum k = Invalid k
       decodeDatumPv12 = decodeRecordSum "Datum" $ \case
         0 -> do
           dh <- decCBOR

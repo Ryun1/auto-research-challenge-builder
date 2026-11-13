@@ -146,17 +146,8 @@ deserialiseDecoder ::
   BSL.ByteString ->
   Either (Read.DeserialiseFailure, BS.ByteString) (a, BS.ByteString)
 deserialiseDecoder version decoder bsl =
-  runST $ do
-    -- When the whole input is one strict chunk, first try the decoder's direct
-    -- form on it. It either answers exactly as the cborg run below would on
-    -- success, or gives no answer; every failure is produced by the cborg run.
-    direct <- case bsl of
-      BSL.Chunk chunk BSL.Empty -> decodeDirectFastPath version chunk decoder
-      _ -> pure Nothing
-    case direct of
-      Just result -> pure (Right result)
-      Nothing ->
-        supplyAllInput bsl =<< Read.deserialiseIncremental (toPlainDecoder (Just bsl) version decoder)
+  runST $
+    supplyAllInput bsl =<< Read.deserialiseIncremental (toPlainDecoder (Just bsl) version decoder)
 {-# INLINE deserialiseDecoder #-}
 
 supplyAllInput ::
