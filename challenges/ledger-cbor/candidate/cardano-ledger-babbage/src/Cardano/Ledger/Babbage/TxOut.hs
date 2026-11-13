@@ -689,9 +689,9 @@ decodeTxOut decAddr = do
       Decoder s (DecodingTxOut era)
     fieldsDef 0 !keysSeen addrF valF datumF scriptF =
       fieldsDone keysSeen addrF valF datumF scriptF
-    fieldsDef remaining !keysSeen addrF valF datumF scriptF =
-      let !remaining' = remaining - 1
-       in decodeField keysSeen addrF valF datumF scriptF (fieldsDef remaining')
+    fieldsDef pairsLeft !keysSeen addrF valF datumF scriptF =
+      let !pairsLeft' = pairsLeft - 1
+       in decodeField keysSeen addrF valF datumF scriptF (fieldsDef pairsLeft')
     fieldsIndef ::
       Word ->
       StrictMaybe (Addr, CompactAddr) ->
