@@ -120,8 +120,8 @@ rebuild about 40.
 - **Daily cap:** the gate job refuses an account's Submission runs beyond
   `DAILY_CAP` (10) in a rolling 24 hours (`.github/scripts/daily-cap.sh`,
   called from `submission.yml`). Every run counts, cancelled and refused ones
-  included, and nobody is exempt. The refusal is a gate refusal, so the PR gets
-  a comment and nothing is built.
+  included. The repo owner, who pays for them, is exempt; nobody else is. The
+  refusal is a gate refusal, so the PR gets a comment and nothing is built.
 - **No CI on candidate-only PRs** (`paths-ignore` in `ci.yml`): CI tests
   nothing of a submission.
 - **Site** publishes after Comment, not after Submission as well.

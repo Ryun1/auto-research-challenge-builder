@@ -73,8 +73,11 @@ jobs:
           TOKEN: ${{ github.token }}
       # Over the cap, this writes gate.json as a refusal: the steps below are
       # skipped, the outputs stay empty (no score job) and Comment posts it.
+      # The repo owner pays for the runs and is exempt: skipped, capped is
+      # empty, which the steps below read as not capped.
       - id: cap
         name: Daily cap per actor (every run is billed)
+        if: github.actor != github.repository_owner
         run: .github/scripts/daily-cap.sh >> "$GITHUB_OUTPUT"
         env:
           REPO: ${{ github.repository }}
