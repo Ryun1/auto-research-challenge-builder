@@ -45,6 +45,15 @@ jobs:
         with:
           ref: main # workflow_run's sha predates the results commit it follows
           persist-credentials: false
+          fetch-depth: 0 # the submission diffs come from history
+      - name: Fetch PR heads (the diffs of PRs that claimed a record)
+        # Objects only: nothing fetched here is checked out, built or run.
+        run: |
+          auth=$(printf 'x-access-token:%s' "$GH_TOKEN" | base64 -w0)
+          git -c "http.https://github.com/.extraheader=AUTHORIZATION: basic $auth" \
+            fetch -q --no-tags origin '+refs/pull/*/head:refs/remotes/pull/*'
+        env:
+          GH_TOKEN: ${{ github.token }}
       - run: rustup toolchain install
       - run: cargo build --locked --release
       - name: Feeds and pages
