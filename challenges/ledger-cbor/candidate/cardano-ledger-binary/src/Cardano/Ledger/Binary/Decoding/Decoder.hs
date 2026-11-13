@@ -845,7 +845,6 @@ decodeMapLikeEnforceNoDuplicatesInternal fromPairs size decodeLenOrIndef =
   decodeListLikeEnforceNoDuplicates decodeLenOrIndef (:) $ \xs ->
     let result = fromPairs (reverse xs)
      in (size result, result)
-{-# INLINE decodeMapLikeEnforceNoDuplicatesInternal #-}
 
 decodeIntMap :: Decoder s v -> Decoder s (IntMap.IntMap v)
 decodeIntMap decodeValue =
