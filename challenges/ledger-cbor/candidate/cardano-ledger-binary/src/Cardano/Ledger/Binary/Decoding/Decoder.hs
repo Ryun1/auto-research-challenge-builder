@@ -432,15 +432,30 @@ bridgeFailed _ = DBail
 
 -- | A cborg primitive together with a direct reading of the same token. Where the
 -- direct reading declines, the cborg primitive itself is run at that position.
+-- cborg hands every token's value to its continuation already evaluated, so the
+-- direct reading's value is forced here too: a decoded value must never reach a
+-- lazy field as a thunk where the cborg form would have put a value.
 directPrim :: C.Decoder s a -> (ByteString -> Int -> DRes a) -> Decoder s a
 directPrim d p =
   Decoder
     (\_ _ -> d)
     ( \_ bs off -> case p bs off of
         DBail -> bridgePlainDecoder d bs off
-        r -> pure r
+        DOk off' x -> x `seq` pure (DOk off' x)
     )
 {-# INLINE directPrim #-}
+
+-- | `directPrim` for a peek, whose result is only ever scrutinised: it is left
+-- unforced so that the reading and the scrutiny can fuse.
+directPeek :: C.Decoder s a -> (ByteString -> Int -> DRes a) -> Decoder s a
+directPeek d p =
+  Decoder
+    (\_ _ -> d)
+    ( \_ bs off -> case p bs off of
+        DBail -> bridgePlainDecoder d bs off
+        r -> pure r
+    )
+{-# INLINE directPeek #-}
 
 -- | A cborg decoder paired with the direct form of a `Decoder` that reads the same
 -- value. The cborg decoder stays the specification; the second argument must
@@ -510,7 +525,7 @@ getOriginalBytes =
           Just bsl -> pure bsl
     )
     -- The direct form only ever runs over the whole original input, held in one chunk.
-    (\_ bs off -> pure (DOk off (BSL.fromStrict bs)))
+    (\_ bs off -> let !original = BSL.fromStrict bs in pure (DOk off original))
 
 -- | This is the message that will be reported by `getOriginalBytes` when original bytes are not
 -- provided. It is defined as a separate biding for testing.
@@ -1944,7 +1959,7 @@ peekByteOffset =
 {-# INLINE peekByteOffset #-}
 
 peekTokenType :: Decoder s C.TokenType
-peekTokenType = directPrim C.peekTokenType dTokenType
+peekTokenType = directPeek C.peekTokenType dTokenType
 {-# INLINE peekTokenType #-}
 
 liftST :: ST s a -> Decoder s a
@@ -2198,7 +2213,7 @@ dListLenOrIndef :: ByteString -> Int -> DRes (Maybe Int)
 dListLenOrIndef bs off
   | dOkOff bs off && BS.index bs off == 0x9f = DOk (off + 1) Nothing
   | otherwise = case dLenOfMajor 4 bs off of
-      DOk o n -> DOk o (Just n)
+      DOk o n -> n `seq` DOk o (Just n) -- cborg's Just holds an evaluated length
       DBail   -> DBail
 
 -- | decodeMapLenOrIndef (Decoding.hs:928-934); tryConsumeMapLenOrIndef
@@ -2209,7 +2224,7 @@ dMapLenOrIndef :: ByteString -> Int -> DRes (Maybe Int)
 dMapLenOrIndef bs off
   | dOkOff bs off && BS.index bs off == 0xbf = DOk (off + 1) Nothing
   | otherwise = case dLenOfMajor 5 bs off of
-      DOk o n -> DOk o (Just n)
+      DOk o n -> n `seq` DOk o (Just n) -- cborg's Just holds an evaluated length
       DBail   -> DBail
 
 -- | decodeListLenIndef (Decoding.hs:716-717): only 0x9f, size 1
