@@ -401,7 +401,9 @@ instance MonadFail (Decoder s) where
   {-# INLINE fail #-}
 
 -- | Promote a regular `C.Decoder` to a versioned one. Which means it will work for all
--- versions.
+-- versions. The decoder must not read the byte offset or the available input
+-- (`C.peekByteOffset`, `C.decodeWithByteSpan`, `C.peekAvailable`): its direct form runs
+-- it over the rest of the input chunk, where those are relative to that rest.
 fromPlainDecoder :: C.Decoder s a -> Decoder s a
 fromPlainDecoder d = Decoder (\_ _ -> d) (\_ bs off -> bridgePlainDecoder d bs off)
 {-# INLINE fromPlainDecoder #-}
@@ -1695,11 +1697,28 @@ decodeNull = directPrim C.decodeNull dNull
 {-# INLINE decodeNull #-}
 
 decodeSequenceLenIndef :: (r -> a -> r) -> r -> (r -> b) -> Decoder s a -> Decoder s b
-decodeSequenceLenIndef a b c dec = withPlainDecoder dec $ C.decodeSequenceLenIndef a b c
+decodeSequenceLenIndef f z g dec =
+  Decoder
+    (\bsl v -> C.decodeSequenceLenIndef f z g (runDecoder dec bsl v))
+    -- cborg's decodeSequenceLenIndef, step for step, through this module's primitives
+    (runDirect (go z))
+  where
+    go !acc =
+      decodeBreakOr >>= \stop ->
+        if stop
+          then pure $! g acc
+          else dec >>= \ !x -> go (f acc x)
 {-# INLINE decodeSequenceLenIndef #-}
 
 decodeSequenceLenN :: (r -> a -> r) -> r -> (r -> b) -> Int -> Decoder s a -> Decoder s b
-decodeSequenceLenN a b c n dec = withPlainDecoder dec $ C.decodeSequenceLenN a b c n
+decodeSequenceLenN f z g c dec =
+  Decoder
+    (\bsl v -> C.decodeSequenceLenN f z g c (runDecoder dec bsl v))
+    -- cborg's decodeSequenceLenN, step for step
+    (runDirect (go z c))
+  where
+    go !acc 0 = pure $! g acc
+    go !acc n = dec >>= \ !x -> go (f acc x) (n - 1 :: Int)
 {-# INLINE decodeSequenceLenN #-}
 
 decodeSimple :: Decoder s Word8
@@ -2302,9 +2321,8 @@ dString bs off = case dPayloadOfMajor 3 bs off of
 --     mt 7: ai 0-19 C.TypeSimple, 20/21 C.TypeBool, 22 C.TypeNull, 23/24
 --           C.TypeSimple, 25/26/27 C.TypeFloat16/32/64, 28-30 Invalid, 31 Break
 -- Bail: no byte (end of input / bad offset) -- cborg's slow path would need
---   more input. ALSO bail (by choice, cborg would actually succeed using just
---   the first byte) when the head's argument bytes are truncated: such a
---   token cannot be consumed in this chunk anyway.
+--   more input. Also declined here when the head's argument bytes are
+--   truncated; `directPrim` then asks cborg, which answers from the first byte.
 {-# INLINE dTokenType #-}
 dTokenType :: ByteString -> Int -> DRes C.TokenType
 dTokenType bs off
