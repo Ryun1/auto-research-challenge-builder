@@ -333,21 +333,26 @@ data DRes a
 -- instead of leaving one updatable thunk per `fmap`/`<*>` for `rnf` (or a
 -- strict constructor field) to enter later. `<$` keeps its default, lazy
 -- meaning.
+--
+-- Each combinator takes apart the decoder it runs first when it is itself
+-- built, not when it is run. A decoder that is the result of a call is then
+-- evaluated by that call, instead of being allocated as a thunk that both forms
+-- share and the first run has to enter and update.
 instance Functor (Decoder s) where
-  fmap f d =
+  fmap f (Decoder dc dd) =
     Decoder
-      (\bsl v -> runDecoder d bsl v >>= \x -> pure $! f x)
+      (\bsl v -> dc bsl v >>= \x -> pure $! f x)
       ( \v bs off ->
-          runDirect d v bs off >>= \case
+          dd v bs off >>= \case
             DOk off' x -> let !y = f x in pure (DOk off' y)
             DBail -> pure DBail
       )
   {-# INLINE fmap #-}
-  x <$ d =
+  x <$ Decoder dc dd =
     Decoder
-      (\bsl v -> x <$ runDecoder d bsl v)
+      (\bsl v -> x <$ dc bsl v)
       ( \v bs off ->
-          runDirect d v bs off >>= \case
+          dd v bs off >>= \case
             DOk off' _ -> pure (DOk off' x)
             DBail -> pure DBail
       )
@@ -356,15 +361,15 @@ instance Functor (Decoder s) where
 instance Applicative (Decoder s) where
   pure x = Decoder (\_ _ -> pure x) (\_ _ off -> pure (DOk off x))
   {-# INLINE pure #-}
-  df <*> dx =
+  Decoder fc fd <*> dx =
     Decoder
       ( \bsl v -> do
-          h <- runDecoder df bsl v
+          h <- fc bsl v
           x <- runDecoder dx bsl v
           pure $! h x
       )
       ( \v bs off ->
-          runDirect df v bs off >>= \case
+          fd v bs off >>= \case
             DBail -> pure DBail
             DOk off1 h ->
               runDirect dx v bs off1 >>= \case
@@ -372,25 +377,25 @@ instance Applicative (Decoder s) where
                 DOk off2 x -> let !y = h x in pure (DOk off2 y)
       )
   {-# INLINE (<*>) #-}
-  da *> db =
+  Decoder ac ad *> db =
     Decoder
-      (\bsl v -> runDecoder da bsl v *> runDecoder db bsl v)
+      (\bsl v -> ac bsl v *> runDecoder db bsl v)
       ( \v bs off ->
-          runDirect da v bs off >>= \case
+          ad v bs off >>= \case
             DBail -> pure DBail
             DOk off1 _ -> runDirect db v bs off1
       )
   {-# INLINE (*>) #-}
 
 instance Monad (Decoder s) where
-  d >>= g =
+  Decoder dc dd >>= g =
     Decoder
       ( \bsl v -> do
-          x <- runDecoder d bsl v
+          x <- dc bsl v
           runDecoder (g x) bsl v
       )
       ( \v bs off ->
-          runDirect d v bs off >>= \case
+          dd v bs off >>= \case
             DBail -> pure DBail
             DOk off1 x -> runDirect (g x) v bs off1
       )
@@ -461,7 +466,7 @@ directPeek d p =
 -- value. The cborg decoder stays the specification; the second argument must
 -- succeed only where it does, with the same value and length.
 plainWithDirect :: C.Decoder s a -> Decoder s a -> Decoder s a
-plainWithDirect plain d = Decoder (\_ _ -> plain) (runDirect d)
+plainWithDirect plain (Decoder _ dd) = Decoder (\_ _ -> plain) dd
 {-# INLINE plainWithDirect #-}
 
 -- | Try to decode a whole strict input with the direct form of the decoder.
@@ -493,10 +498,10 @@ withPlainDecoder vd f = Decoder (\bsl -> f . runDecoder vd bsl) (\_ _ _ -> pure 
 
 -- | Ignore the current version of the decoder and enforce the supplied one instead.
 enforceDecoderVersion :: Version -> Decoder s a -> Decoder s a
-enforceDecoderVersion version d =
+enforceDecoderVersion version (Decoder dc dd) =
   Decoder
-    (\bsl _ -> runDecoder d bsl version)
-    (\_ bs off -> runDirect d version bs off)
+    (\bsl _ -> dc bsl version)
+    (\_ bs off -> dd version bs off)
 {-# INLINE enforceDecoderVersion #-}
 
 decodeBytesDefinite :: Decoder s ByteString
@@ -1884,13 +1889,13 @@ decodeUtf8ByteArrayCanonical = fromPlainDecoder C.decodeUtf8ByteArrayCanonical
 {-# INLINE decodeUtf8ByteArrayCanonical #-}
 
 decodeWithByteSpan :: Decoder s a -> Decoder s (a, C.ByteOffset, C.ByteOffset)
-decodeWithByteSpan d =
+decodeWithByteSpan (Decoder dc dd) =
   Decoder
-    (\bsl v -> C.decodeWithByteSpan (runDecoder d bsl v))
+    (\bsl v -> C.decodeWithByteSpan (dc bsl v))
     -- cborg's decodeWithByteSpan reports the offsets before and after the value;
     -- in the direct form those are the offsets into the chunk.
     ( \v bs off ->
-        runDirect d v bs off >>= \case
+        dd v bs off >>= \case
           DOk off' x ->
             let !start = fromIntegral off
                 !end = fromIntegral off'
