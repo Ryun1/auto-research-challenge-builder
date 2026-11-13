@@ -9,6 +9,11 @@
 //! `textContent`; the data is embedded as JSON with `<`, `>` and `&` escaped,
 //! so no file content can close the script element.
 //!
+//! Each scored submission on the record history (a promotion, or a PR that
+//! claimed a record) also gets its diff, `diffs/<slug>/<commit>.patch`: the
+//! change to the challenge's editable paths, taken from the git history the
+//! site is built in. A commit that isn't in that history gets no diff.
+//!
 //! An optional `state.json` (pipeline runs and open PRs, written by the deploy
 //! workflow) is fetched by the page at load time; without it the page is
 //! complete.
@@ -28,6 +33,8 @@ const FONT: &[u8] = include_bytes!("../assets/site/instrument-sans.woff2");
 const MAX_REASON: usize = 240;
 const MAX_SUMMARY: usize = 900;
 const MAX_PROMPT: usize = 8000;
+/// A patch past this is cut, with a note saying so.
+const MAX_PATCH: usize = 512 * 1024;
 
 fn str_of(v: &Value) -> &str {
     v.as_str().unwrap_or("")
@@ -240,12 +247,82 @@ fn public_reason(reason: &str) -> String {
     clip(&redact_emails(kept), MAX_REASON)
 }
 
+fn git(repo: &Path, args: &[&str]) -> Option<String> {
+    let out = std::process::Command::new("git")
+        .arg("-C")
+        .arg(repo)
+        .args(args)
+        .stderr(std::process::Stdio::null())
+        .output()
+        .ok()?;
+    out.status
+        .success()
+        .then(|| String::from_utf8_lossy(&out.stdout).into_owned())
+}
+
+/// What a scored commit changed in the challenge's editable paths. A
+/// promotion's commit is the squash merge on main, so its parent is the base;
+/// a PR's commit is the branch head, compared from where it left main.
+fn patch(
+    repo: &Path,
+    slug: &str,
+    editable: &[String],
+    stage: &str,
+    commit: &str,
+) -> Option<String> {
+    if commit.len() != 40 || !commit.bytes().all(|b| b.is_ascii_hexdigit()) {
+        return None;
+    }
+    let base = match stage {
+        "promotion" => format!("{commit}^"),
+        "pr" => git(repo, &["merge-base", "HEAD", commit])?
+            .trim()
+            .to_string(),
+        _ => return None,
+    };
+    let specs: Vec<String> = editable
+        .iter()
+        .map(|e| format!("challenges/{slug}/{e}"))
+        .collect();
+    let mut args = vec![
+        "diff",
+        "--no-color",
+        "--no-ext-diff",
+        "--no-textconv",
+        "-M",
+        &base,
+        commit,
+        "--",
+    ];
+    args.extend(specs.iter().map(String::as_str));
+    let text = git(repo, &args)?;
+    if text.is_empty() {
+        return None;
+    }
+    if text.len() <= MAX_PATCH {
+        return Some(text);
+    }
+    let mut cut = MAX_PATCH;
+    while !text.is_char_boundary(cut) {
+        cut -= 1;
+    }
+    let cut = text[..cut].rfind('\n').map_or(cut, |i| i + 1);
+    Some(format!(
+        "{}\n[diff cut at {} KiB of {} KiB]\n",
+        &text[..cut],
+        MAX_PATCH / 1024,
+        text.len() / 1024
+    ))
+}
+
 /// One challenge's public summary. `has_feed`: a feed was written for it.
+/// The diffs of its scored submissions go into `patches` as (path, text).
 pub fn challenge(
     root: &Path,
     candidates: &Path,
     slug: &str,
     has_feed: bool,
+    patches: &mut Vec<(String, String)>,
 ) -> Result<Value, String> {
     let dir = root.join(slug);
     let spec = Spec::load(&dir)?;
@@ -301,12 +378,22 @@ pub fn challenge(
                    "delta_pct": pct, "at": str_of(&r["at"]), "commit": str_of(&r["commit"])})
         })
         .collect();
+    let repo = root.parent().unwrap_or(root);
     // Newest first.
     let attempts: Vec<Value> = results
         .iter()
         .rev()
         .map(|r| {
-            json!({"at": str_of(&r["at"]), "stage": str_of(&r["stage"]), "status": str_of(&r["status"]),
+            let commit = str_of(&r["commit"]);
+            let diff = matches!(str_of(&r["status"]), "promoted" | "valid_claim_better")
+                .then(|| patch(repo, slug, &spec.paths.editable, str_of(&r["stage"]), commit))
+                .flatten()
+                .map(|text| {
+                    let path = format!("diffs/{slug}/{commit}.patch");
+                    patches.push((path.clone(), text));
+                    path
+                });
+            json!({"diff": diff,"at": str_of(&r["at"]), "stage": str_of(&r["stage"]), "status": str_of(&r["status"]),
                    "value": r["value"].as_f64(), "record_before": r["record_before"].as_f64(),
                    "by": str_of(&r["by"]), "model": str_of(&r["model"]), "commit": str_of(&r["commit"]),
                    "reason": public_reason(str_of(&r["reason"]))})
@@ -380,12 +467,16 @@ pub fn write(root: &Path, out: &Path, feeds: &[String], generated_at: &str) -> R
         .unwrap_or_else(|| "candidates".into());
     // A challenge that doesn't load is left off the page, not fatal: Comment
     // and Promote run `cb feed` before they commit results and comment.
+    let mut patches = Vec::new();
     let challenges: Vec<Value> = slugs(root)?
         .iter()
         .filter_map(|s| {
-            challenge(root, &candidates, s, feeds.contains(s))
-                .map_err(|e| eprintln!("site: skipping {s}: {e}"))
-                .ok()
+            let mut mine = Vec::new();
+            let c = challenge(root, &candidates, s, feeds.contains(s), &mut mine);
+            if c.as_ref().is_ok_and(|c| c["status"] == "open") {
+                patches.append(&mut mine);
+            }
+            c.map_err(|e| eprintln!("site: skipping {s}: {e}")).ok()
         })
         // The site lists open challenges only; drafts and closed ones keep
         // their feeds but aren't published on the page.
@@ -403,6 +494,13 @@ pub fn write(root: &Path, out: &Path, feeds: &[String], generated_at: &str) -> R
     std::fs::create_dir_all(out.join("assets")).map_err(|e| e.to_string())?;
     w("assets/style.css", STYLE)?;
     w("assets/app.js", SCRIPT)?;
+    // Rewritten whole each build: a diff whose row left the page goes too.
+    let _ = std::fs::remove_dir_all(out.join("diffs"));
+    for (rel, text) in &patches {
+        let p = out.join(rel);
+        std::fs::create_dir_all(p.parent().unwrap()).map_err(|e| e.to_string())?;
+        w(rel, text)?;
+    }
     let font = out.join("assets/instrument-sans.woff2");
     std::fs::write(&font, FONT).map_err(|e| format!("{}: {e}", font.display()))?;
     w(
@@ -537,5 +635,61 @@ mod tests {
         );
         std::fs::write(dir.join("PROMPT.md"), "x".repeat(MAX_PROMPT + 50)).unwrap();
         assert_eq!(prompt(&dir).unwrap().chars().count(), MAX_PROMPT + 1);
+    }
+
+    #[test]
+    fn a_submission_diff_covers_its_editable_paths_only() {
+        let repo = crate::paths::scratch("pages-diff");
+        std::fs::create_dir_all(repo.join("challenges/toy/candidate")).unwrap();
+        let git = |args: &[&str]| {
+            let ok = std::process::Command::new("git")
+                .arg("-C")
+                .arg(&repo)
+                .args([
+                    "-c",
+                    "user.name=t",
+                    "-c",
+                    "user.email=t@t",
+                    "-c",
+                    "commit.gpgsign=false",
+                ])
+                .args(args)
+                .status()
+                .unwrap()
+                .success();
+            assert!(ok, "git {args:?}");
+        };
+        let head = || {
+            super::git(&repo, &["rev-parse", "HEAD"])
+                .unwrap()
+                .trim()
+                .to_string()
+        };
+        git(&["init", "-q", "-b", "main"]);
+        std::fs::write(repo.join("challenges/toy/candidate/a.txt"), "one\n").unwrap();
+        git(&["add", "-A"]);
+        git(&["commit", "-qm", "base"]);
+        std::fs::write(repo.join("challenges/toy/candidate/a.txt"), "two\n").unwrap();
+        std::fs::write(repo.join("challenges/toy/results.jsonl"), "{}\n").unwrap();
+        git(&["add", "-A"]);
+        git(&["commit", "-qm", "promote"]);
+        let promoted = head();
+        let ed = vec!["candidate/".to_string()];
+        let p = patch(&repo, "toy", &ed, "promotion", &promoted).unwrap();
+        assert!(
+            p.contains("-one\n+two\n") && !p.contains("results.jsonl"),
+            "{p}"
+        );
+        // A PR head is compared from where it left main.
+        git(&["checkout", "-qb", "pr", "HEAD~1"]);
+        std::fs::write(repo.join("challenges/toy/candidate/a.txt"), "three\n").unwrap();
+        git(&["commit", "-qam", "pr"]);
+        let pr = head();
+        git(&["checkout", "-q", "main"]);
+        let p = patch(&repo, "toy", &ed, "pr", &pr).unwrap();
+        assert!(p.contains("-one\n+three\n"), "{p}");
+        assert_eq!(patch(&repo, "toy", &ed, "baseline", &promoted), None);
+        assert_eq!(patch(&repo, "toy", &ed, "pr", "HEAD"), None);
+        assert_eq!(patch(&repo, "toy", &ed, "pr", &"0".repeat(40)), None);
     }
 }
