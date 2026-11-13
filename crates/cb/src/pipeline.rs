@@ -544,9 +544,26 @@ pub fn record(root: &Path, slug: &str, runs: &[Value], a: &Attempt) -> Result<Va
         && runs
             .iter()
             .any(|r| r["paired"]["commit"].as_str() != record_commit_now);
-    // Independent runs must agree within half the bar (exactly, if the bar is 0).
-    let agree = match (if paired { &ratios } else { &values })[..] {
-        [Some(x), Some(y)] => ((x - y).abs() / x.abs().max(f64::MIN_POSITIVE)) <= m / 2.0,
+    // What the runs are compared on: candidate/record when paired, else the value.
+    let compared = if paired { &ratios } else { &values };
+    // Whether one run, on its own, clears the bar against the record.
+    let clears = |x: f64| match (paired, maximise, record_value) {
+        (true, true, _) => x > 1.0 && x >= 1.0 + m,
+        (true, false, _) => x < 1.0 && x <= 1.0 - m,
+        (false, true, Some(rec)) => x > rec && x >= rec * (1.0 + m),
+        (false, false, Some(rec)) => x < rec && x <= rec * (1.0 - m),
+        (false, _, None) => false,
+    };
+    // Independent runs must agree. A baseline's value is what gets recorded,
+    // so its runs must agree within half the bar (exactly, if the bar is 0).
+    // A promotion only decides whether the candidate clears the bar, so its
+    // runs must reach the same verdict: different pools spread further apart
+    // the bigger the win (#57, #76), and that spread doesn't change the verdict.
+    let agree = match compared[..] {
+        [Some(x), Some(y)] if a.stage == "baseline" => {
+            ((x - y).abs() / x.abs().max(f64::MIN_POSITIVE)) <= m / 2.0
+        }
+        [Some(x), Some(y)] => clears(x) == clears(y),
         [Some(_)] => true,
         _ => false,
     };
@@ -572,10 +589,18 @@ pub fn record(root: &Path, slug: &str, runs: &[Value], a: &Attempt) -> Result<Va
                     record_commit_now.unwrap_or("none")
                 ),
             )
-        } else if !agree {
+        } else if !agree && a.stage == "baseline" {
             (
                 "infra_failed",
                 format!("independent runs disagree beyond {}: {values:?}", m / 2.0),
+            )
+        } else if !agree {
+            (
+                "infra_failed",
+                format!(
+                    "independent runs disagree on clearing the bar {m}: {} {compared:?}",
+                    if paired { "candidate/record" } else { "values" }
+                ),
             )
         } else if a.stage == "baseline" {
             if record.is_some() {
@@ -591,12 +616,7 @@ pub fn record(root: &Path, slug: &str, runs: &[Value], a: &Attempt) -> Result<Va
                 ),
                 Some(rec) => {
                     let ratio = ratios.iter().flatten().sum::<f64>() / ratios.len().max(1) as f64;
-                    let better = match (paired, maximise) {
-                        (true, true) => ratio > 1.0 && ratio >= 1.0 + m,
-                        (true, false) => ratio < 1.0 && ratio <= 1.0 - m,
-                        (false, true) => v > rec && v >= rec * (1.0 + m),
-                        (false, false) => v < rec && v <= rec * (1.0 - m),
-                    };
+                    let better = clears(if paired { ratio } else { v });
                     if better && a.stage == "promotion" && paired {
                         (
                             "promoted",
@@ -952,6 +972,38 @@ pub(crate) mod tests {
             record(&root, "toy", &[v(50.0), v(51.0)], &at).unwrap()["status"],
             "infra_failed"
         );
+    }
+
+    /// Promotion runs agree when they reach the same verdict, however far
+    /// apart their values are (#76: 1.102 and 1.094 against a 1% bar).
+    #[test]
+    fn promotion_runs_agree_on_the_verdict() {
+        let dir = repo();
+        let root = dir.join("challenges");
+        let base = Attempt {
+            stage: "baseline",
+            commit: "c0",
+            by: "b",
+            model: "",
+            at: "t",
+        };
+        let v = |x: f64| json!({"slug": "toy", "status": "valid", "value": x});
+        record(&root, "toy", &[v(50.0), v(50.0)], &base).unwrap();
+        let p = Attempt {
+            stage: "promotion",
+            commit: "c1",
+            ..base
+        };
+        // One clears the bar, one doesn't: a real disagreement.
+        let e = record(&root, "toy", &[v(60.0), v(50.2)], &p).unwrap();
+        assert_eq!(e["status"], "infra_failed", "{e}");
+        assert!(e["reason"].as_str().unwrap().contains("clearing the bar"));
+        // Both miss, though far apart: not promoted.
+        let e = record(&root, "toy", &[v(50.1), v(45.0)], &p).unwrap();
+        assert_eq!(e["status"], "valid_not_promoted", "{e}");
+        // Both clear, 7% apart: promoted.
+        let e = record(&root, "toy", &[v(60.0), v(56.0)], &p).unwrap();
+        assert_eq!(e["status"], "promoted", "{e}");
     }
 
     /// Runtime containment (#13). Linux CI only (needs sudo, unshare, setpriv);

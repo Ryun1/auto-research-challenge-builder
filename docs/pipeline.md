@@ -10,7 +10,7 @@ PR ──▶ Submission (pull_request_target, runs main's copy, read-only token,
                verify + score as nobody with no network → score.json (a claim)
    ──▶ Comment (workflow_run, main's copy): record stage=pr attempt, post comment
 merge ──▶ Promote (push to main): two independent sandboxed runs, fresh seeds
-        record  trusted: agree within half the bar? beats the record by the bar?
+        record  trusted: both runs clear the bar (or both miss)? beats the record?
                 → promoted | valid_not_promoted | rejected | infra_failed,
                 append to results.jsonl; if not promoted, revert the editable
                 files to the record's commit

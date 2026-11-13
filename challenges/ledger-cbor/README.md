@@ -79,9 +79,10 @@ input runs this on the baseline, in the same no-network build sandbox.
 **Promotion.** Each of the two promotion runs scores the record's tree too, on
 the same fresh pool and seed, and `cb record` decides on candidate/record
 (#57). Measure run 42721883592 showed that two different pools disagree by
-more than the agreement window once a win is 5% or more. Promotion needs both
-runs to pass and their candidate/record ratios to agree within 0.5% (half the
-bar). The mean ratio must be at least 1.01. Any other outcome, infra failures
+more than the agreement window once a win is 5% or more, and #76's two paired
+ratios (1.102 and 1.094) still spread wider than 0.5%. So promotion needs both
+runs to pass and each candidate/record ratio to clear the bar on its own: at
+least 1.01. A ratio above the bar and one below it is a disagreement. Any other outcome, infra failures
 included, reverts `candidate/` on `main` to the record's tree.
 
 Needs Linux (valgrind), GHC 9.6.7, cabal 3.16, and libsodium, secp256k1 and
