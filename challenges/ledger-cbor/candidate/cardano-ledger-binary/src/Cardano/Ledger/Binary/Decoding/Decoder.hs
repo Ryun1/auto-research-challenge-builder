@@ -1940,25 +1940,47 @@ dTwoP63 = 0x8000000000000000
 -- slow path, which needs more input). Big-endian, any width.
 dArg :: ByteString -> Int -> Word8 -> DRes Word64
 dArg bs p ai
-  | ai < 24   = DOk (p + 1) (fromIntegral ai)
-  | ai == 24  = if rest >= 2 then DOk (p + 2) (b 1) else DBail
-  | ai == 25  = if rest >= 3 then DOk (p + 3) ((b 1 `shiftL` 8) .|. b 2) else DBail
-  | ai == 26  = if rest >= 5
-                  then DOk (p + 5) ((b 1 `shiftL` 24) .|. (b 2 `shiftL` 16)
-                                 .|. (b 3 `shiftL` 8)  .|.  b 4)
-                  else DBail
-  | ai == 27  = if rest >= 9
-                  then DOk (p + 9) ((b 1 `shiftL` 56) .|. (b 2 `shiftL` 48)
-                                 .|. (b 3 `shiftL` 40) .|. (b 4 `shiftL` 32)
-                                 .|. (b 5 `shiftL` 24) .|. (b 6 `shiftL` 16)
-                                 .|. (b 7 `shiftL` 8)  .|.  b 8)
-                  else DBail
+  | ai < 24 = DOk (p + 1) (fromIntegral ai)
+  | ai == 24 =
+      if BS.length bs - p >= 2
+        then DOk (p + 2) (fromIntegral (BS.index bs (p + 1)))
+        else DBail
+  | otherwise = dArgWide bs p ai
+{-# INLINE dArg #-}
+
+-- | The 2, 4 and 8 byte arguments (additional info 25, 26, 27) of `dArg`, kept out
+-- of line so that inlining the token readers copies only the short cases.
+dArgWide :: ByteString -> Int -> Word8 -> DRes Word64
+dArgWide bs p ai
+  | ai == 25 = if rest >= 3 then DOk (p + 3) ((b 1 `shiftL` 8) .|. b 2) else DBail
+  | ai == 26 =
+      if rest >= 5
+        then
+          DOk
+            (p + 5)
+            ((b 1 `shiftL` 24) .|. (b 2 `shiftL` 16) .|. (b 3 `shiftL` 8) .|. b 4)
+        else DBail
+  | ai == 27 =
+      if rest >= 9
+        then
+          DOk
+            (p + 9)
+            ( (b 1 `shiftL` 56)
+                .|. (b 2 `shiftL` 48)
+                .|. (b 3 `shiftL` 40)
+                .|. (b 4 `shiftL` 32)
+                .|. (b 5 `shiftL` 24)
+                .|. (b 6 `shiftL` 16)
+                .|. (b 7 `shiftL` 8)
+                .|. b 8
+            )
+        else DBail
   | otherwise = DBail
   where
-    rest = BS.length bs - p          -- >= 1, no overflow (0 <= p < len)
+    rest = BS.length bs - p -- >= 1, no overflow (0 <= p < len)
     b :: Int -> Word64
     b i = fromIntegral (BS.index bs (p + i))
-{-# INLINE dArg #-}
+{-# NOINLINE dArgWide #-}
 
 -- | Argument of a head whose major type must be @mt@ (0..7).
 dArgOfMajor :: Word8 -> ByteString -> Int -> DRes Word64
@@ -1979,6 +2001,7 @@ dArgOfMajor mt bs off
 -- Read.hs:1625-1626). go_fast Read.hs:271-274, go_fast_end Read.hs:752-755.
 -- Bail: every other head (cborg: DecodeFailure -> "expected word"; note
 -- major 1 is NOT accepted by decodeWord), truncated head, bad offset.
+{-# INLINE dWord #-}
 dWord :: ByteString -> Int -> DRes Word
 dWord bs off = case dArgOfMajor 0 bs off of
   DOk o w -> DOk o (fromIntegral w)
@@ -1988,6 +2011,7 @@ dWord bs off = case dArgOfMajor 0 bs off of
 -- DOk: major-0 heads (any width) whose value <= 0xff. go_fast Read.hs:276-282
 -- (gtWord# w# 0xff## -> 0# continues), go_fast_end Read.hs:757-763.
 -- Bail: value > 0xff (cborg: "expected word8"), non-major-0, truncation.
+{-# INLINE dWord8 #-}
 dWord8 :: ByteString -> Int -> DRes Word8
 dWord8 bs off = case dArgOfMajor 0 bs off of
   DOk o w | w <= 0xff -> DOk o (fromIntegral w)
@@ -1997,6 +2021,7 @@ dWord8 bs off = case dArgOfMajor 0 bs off of
 -- DOk: major-0 heads (any width) with value <= 0xffff. go_fast
 -- Read.hs:284-290, go_fast_end Read.hs:765-771.
 -- Bail: value > 0xffff (cborg fails), otherwise as dWord.
+{-# INLINE dWord16 #-}
 dWord16 :: ByteString -> Int -> DRes Word16
 dWord16 bs off = case dArgOfMajor 0 bs off of
   DOk o w | w <= 0xffff -> DOk o (fromIntegral w)
@@ -2006,6 +2031,7 @@ dWord16 bs off = case dArgOfMajor 0 bs off of
 -- DOk: major-0 heads (any width) with value <= 0xffffffff. go_fast
 -- Read.hs:292-301 (64-bit branch: gtWord# w# 0xffffffff##), go_fast_end
 -- Read.hs:773-783.  Bail: value > 0xffffffff (cborg fails), otherwise as dWord.
+{-# INLINE dWord32 #-}
 dWord32 :: ByteString -> Int -> DRes Word32
 dWord32 bs off = case dArgOfMajor 0 bs off of
   DOk o w | w <= 0xffffffff -> DOk o (fromIntegral w)
@@ -2013,6 +2039,7 @@ dWord32 bs off = case dArgOfMajor 0 bs off of
 
 -- | decodeWord64: on ARCH_64bit it is ConsumeWord (Decoding.hs:420-427), so
 -- exactly dWord's acceptance: all major-0 heads, any width, any value.
+{-# INLINE dWord64 #-}
 dWord64 :: ByteString -> Int -> DRes Word64
 dWord64 = dArgOfMajor 0
 
@@ -2029,6 +2056,7 @@ dWord64 = dArgOfMajor 0
 --   go_fast Read.hs:309-312, go_fast_end Read.hs:790-793.
 -- Bail: 0x1b / 0x3b with n >= 2^63 (cborg: word64ToInt Nothing ->
 --   DecodeFailure -> "expected int"); every other major; ai 28-31; truncation.
+{-# INLINE dInt #-}
 dInt :: ByteString -> Int -> DRes Int
 dInt bs off
   | not (dOkOff bs off) = DBail
@@ -2047,6 +2075,7 @@ dInt bs off
 
 -- | decodeInt64: on ARCH_64bit it is ConsumeInt (Decoding.hs:479-486), so
 -- exactly dInt's acceptance and value (toInt64 is the identity on 64-bit).
+{-# INLINE dInt64 #-}
 dInt64 :: ByteString -> Int -> DRes Int64
 dInt64 bs off = case dInt bs off of
   DOk o n -> DOk o (fromIntegral n)
@@ -2061,6 +2090,7 @@ dInt64 bs off = case dInt bs off of
 -- Bail (by choice): 0xc2 / 0xc3 bignum tags (cborg handles them, possibly
 --   across chunks: readBigUInt/readBigNInt) -- we never decode them here.
 -- Bail: everything else (cborg: DecodeFailure "expected integer"), truncation.
+{-# INLINE dInteger #-}
 dInteger :: ByteString -> Int -> DRes Integer
 dInteger bs off
   | not (dOkOff bs off) = DBail
@@ -2096,6 +2126,7 @@ dLenOfMajor mt bs off = case dArgOfMajor mt bs off of
 -- Bail: 0x9f indefinite (no case in tryConsumeListLen -> "expected list
 --   len"), 0x9b with n >= 2^63 (word64ToInt Nothing -> DecodeFailure),
 --   0x9c-0x9e, other majors, truncation.
+{-# INLINE dListLen #-}
 dListLen :: ByteString -> Int -> DRes Int
 dListLen = dLenOfMajor 4
 
@@ -2103,6 +2134,7 @@ dListLen = dLenOfMajor 4
 -- tryConsumeMapLen Read.hs:1968-2008. Same shape as dListLen on 0xa0-0xbb.
 -- go_fast Read.hs:347-350, go_fast_end Read.hs:828-831.
 -- Bail: 0xbf, 0xbb with n >= 2^63, 0xbc-0xbe, other majors, truncation.
+{-# INLINE dMapLen #-}
 dMapLen :: ByteString -> Int -> DRes Int
 dMapLen = dLenOfMajor 5
 
@@ -2112,6 +2144,7 @@ dMapLen = dLenOfMajor 5
 -- n < 2^63), 0x9f -> (-1) -> Nothing (Read.hs:2065), size 1.
 -- go_fast Read.hs:688-691, go_fast_end Read.hs:1197-1200.
 -- Bail: as dListLen except 0x9f.
+{-# INLINE dListLenOrIndef #-}
 dListLenOrIndef :: ByteString -> Int -> DRes (Maybe Int)
 dListLenOrIndef bs off
   | dOkOff bs off && BS.index bs off == 0x9f = DOk (off + 1) Nothing
@@ -2122,6 +2155,7 @@ dListLenOrIndef bs off
 -- | decodeMapLenOrIndef (Decoding.hs:928-934); tryConsumeMapLenOrIndef
 -- Read.hs:2070-2112, 0xbf -> Nothing (Read.hs:2110).
 -- go_fast Read.hs:693-696, go_fast_end Read.hs:1202-1205.
+{-# INLINE dMapLenOrIndef #-}
 dMapLenOrIndef :: ByteString -> Int -> DRes (Maybe Int)
 dMapLenOrIndef bs off
   | dOkOff bs off && BS.index bs off == 0xbf = DOk (off + 1) Nothing
@@ -2169,6 +2203,7 @@ dBreakOr bs off
 -- Note 0xc2/0xc3 ARE accepted as plain tags 2/3 by decodeTag.
 -- go_fast Read.hs:352-355, go_fast_end Read.hs:833-836.
 -- Bail: other heads (incl. 0xdc-0xdf), truncation.
+{-# INLINE dTag #-}
 dTag :: ByteString -> Int -> DRes Word
 dTag bs off = case dArgOfMajor 6 bs off of
   DOk o w -> DOk o (fromIntegral w)
@@ -2176,6 +2211,7 @@ dTag bs off = case dArgOfMajor 6 bs off of
 
 -- | decodeTag64: on ARCH_64bit it is ConsumeTag (Decoding.hs:752-765), so
 -- exactly dTag's acceptance, value widened to Word64.
+{-# INLINE dTag64 #-}
 dTag64 :: ByteString -> Int -> DRes Word64
 dTag64 = dArgOfMajor 6
 
@@ -2228,6 +2264,7 @@ dPayloadOfMajor mt bs off = case dArgOfMajor mt bs off of
 --   needs more input); 0x5b with n >= 2^63 (DecodeFailure, Read.hs:2563);
 --   0x5f indefinite and 0x5c-0x5e (DecodeFailure); other majors; truncated
 --   head.
+{-# INLINE dBytes #-}
 dBytes :: ByteString -> Int -> DRes ByteString
 dBytes = dPayloadOfMajor 2
 
@@ -2238,6 +2275,7 @@ dBytes = dPayloadOfMajor 2
 --   Fits payload: go_fast Read.hs:570-574, go_fast_end Read.hs:1064-1068.
 -- Bail: invalid UTF-8 (cborg: SlowFail "invalid UTF8"), TooLong, 0x7f
 --   indefinite, 0x7c-0x7e, 0x7b with n >= 2^63, other majors, truncation.
+{-# INLINE dString #-}
 dString :: ByteString -> Int -> DRes Text.Text
 dString bs off = case dPayloadOfMajor 3 bs off of
   DOk o p -> case Text.decodeUtf8' p of
@@ -2267,6 +2305,7 @@ dString bs off = case dPayloadOfMajor 3 bs off of
 --   more input. ALSO bail (by choice, cborg would actually succeed using just
 --   the first byte) when the head's argument bytes are truncated: such a
 --   token cannot be consumed in this chunk anyway.
+{-# INLINE dTokenType #-}
 dTokenType :: ByteString -> Int -> DRes C.TokenType
 dTokenType bs off
   | not (dOkOff bs off) = DBail
@@ -2282,6 +2321,7 @@ dTokenType bs off
       in if BS.length bs - off < need then DBail
          else DOk off (dClassify mt ai)
 
+{-# INLINE dClassify #-}
 dClassify :: Word8 -> Word8 -> C.TokenType
 dClassify mt ai
   | ai >= 28 && ai <= 30 = C.TypeInvalid
@@ -2317,6 +2357,7 @@ dClassify mt ai
 -- | decodeByteArray = ConsumeByteArray: cborg reads the token with the same
 -- tryConsumeBytes as decodeBytes (go_fast Read.hs:563-566) and copies the payload
 -- into a fresh byte array, as `toShort` does here.
+{-# INLINE dByteArray #-}
 dByteArray :: ByteString -> Int -> DRes ByteArray
 dByteArray bs off = case dBytes bs off of
   DOk o payload -> case toShort payload of
