@@ -657,7 +657,9 @@ instance (VRFAlgorithm v, Typeable a) => DecCBOR (CertifiedVRF v a) where
 --------------------------------------------------------------------------------
 
 instance DecCBOR SlotNo where
-  decCBOR = fromPlainDecoder Serialise.decode
+  -- SlotNo's Serialise instance is Word64's (newtype derived), whose decode is
+  -- cborg's decodeWord64; the direct form reads the same token.
+  decCBOR = plainWithDirect Serialise.decode (SlotNo <$> decodeWord64)
   {-# INLINE decCBOR #-}
 
 instance (Serialise.Serialise t, Typeable t) => DecCBOR (WithOrigin t) where

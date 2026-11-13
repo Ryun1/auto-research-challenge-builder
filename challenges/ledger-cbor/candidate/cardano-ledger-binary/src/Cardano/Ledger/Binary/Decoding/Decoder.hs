@@ -19,6 +19,7 @@ module Cardano.Ledger.Binary.Decoding.Decoder (
   getOriginalBytes,
   originalBytesExpectedFailureMessage,
   decodeDirectFastPath,
+  plainWithDirect,
   DecoderError (..),
   C.ByteOffset,
   ByteArray (..),
@@ -438,6 +439,13 @@ directPrim d p =
         r -> pure r
     )
 {-# INLINE directPrim #-}
+
+-- | A cborg decoder paired with the direct form of a `Decoder` that reads the same
+-- value. The cborg decoder stays the specification; the second argument must
+-- succeed only where it does, with the same value and length.
+plainWithDirect :: C.Decoder s a -> Decoder s a -> Decoder s a
+plainWithDirect plain d = Decoder (\_ _ -> plain) (runDirect d)
+{-# INLINE plainWithDirect #-}
 
 -- | Try to decode a whole strict input with the direct form of the decoder.
 -- `Nothing` means no answer: decode with `toPlainDecoder` instead. `Just` is
@@ -1639,7 +1647,11 @@ decodeListLenIndef = directPrim C.decodeListLenIndef dListLenIndef
 {-# INLINE decodeListLenIndef #-}
 
 decodeListLenOf :: Int -> Decoder s ()
-decodeListLenOf = fromPlainDecoder . C.decodeListLenOf
+decodeListLenOf n =
+  -- cborg's decodeListLenOf is decodeListLen followed by an equality test.
+  directPrim (C.decodeListLenOf n) $ \bs off -> case dListLen bs off of
+    DOk off' len | len == n -> DOk off' ()
+    _ -> DBail
 {-# INLINE decodeListLenOf #-}
 
 decodeListLenOrIndef :: Decoder s (Maybe Int)
