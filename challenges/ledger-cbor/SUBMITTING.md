@@ -103,7 +103,7 @@ The **Comment** workflow then posts a new comment on the PR:
 | status `rejected`, reason `build: ...` | it didn't compile (or the build ran past 60 min) |
 | status `rejected`, reason `verify failed` | some output, re-encoding, accept/reject result or `rnf` result differs from the reference |
 | status `rejected`, reason `wall-time guard: regressed` | the paired wall-time run put your build below 0.92× the reference's speed |
-| status `infra_failed` | setup failed or wall time was too noisy to judge in three attempts. Not your change: push again or ask the maintainer to re-run |
+| status `infra_failed` | setup failed, wall time was too noisy to judge in three attempts, or the reference itself misbehaved on the fresh pool. Not your change: push again or ask the maintainer to re-run |
 | "No score was produced" | the score job died before writing a result. See the run |
 
 The comment gives the status, the speedup and the wall-time guard only. For

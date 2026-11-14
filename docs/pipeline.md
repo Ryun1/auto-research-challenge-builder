@@ -25,7 +25,11 @@ Changes from the original plan, with the reasons:
   world-readable scratch copy that `nobody` can't write. `cb` strips
   `ACTIONS_*`/`GITHUB_*`/`*TOKEN*` variables from every command it runs.
 - **Non-promoted merges are reverted.** This keeps `main`'s candidate equal to
-  the record, so the next PR starts from the best one.
+  the record, so the next PR starts from the best one. A promotion run that
+  ends `infra_failed` is first scored once more from scratch (new pool, new
+  seed), so one infrastructure failure doesn't revert a merge. A verify the
+  judge blames on the infrastructure (`"infra": true`, e.g. the reference
+  misbehaving) is `infra_failed`, not `rejected`.
 - **PR-stage attempts are recorded** (`stage: "pr"`), so `results.jsonl` keeps
   the denominator even for PRs that are never merged.
 

@@ -85,7 +85,7 @@ def verify(seed):
     path = write([t for _, t in cases])
     ref, cand = lines(REF, "digest", path), lines(CAND, "digest", path)
     if any(not r.startswith("ok ") for (k, _), r in zip(cases, ref) if k in ("valid", "scored")):
-        return {"ok": False, "detail": "infra: reference rejected a mainnet tx"}
+        return {"ok": False, "infra": True, "detail": "infra: reference rejected a mainnet tx"}
     if len(cand) != len(cases):
         return {"ok": False, "detail": f"candidate printed {len(cand)} lines for {len(cases)} inputs"}
     bad = [(i, k, r, c) for i, ((k, _), r, c) in enumerate(zip(cases, ref, cand)) if r != c]
@@ -97,18 +97,26 @@ def verify(seed):
     # The timed pass forces a decoded tx with rnf, and the candidate owns some
     # NFData instances (Sized), so digests alone don't show that the timed pass
     # decoded everything. On every input the reference accepts, the harness
-    # repeats the timed pass's decode + rnf and walks the heap: nothing may be
-    # left unevaluated, and no more function closures than the reference has.
+    # repeats the timed pass's decode + rnf and walks the heap: the candidate
+    # may leave no more unevaluated closures and no more function closures than
+    # the reference leaves on the same input. That is nothing on almost every
+    # mainnet tx, but upstream's own rnf leaves a few thunks on some tx shapes
+    # (Promote 43471245947: 'nf 2 0'), and the candidate isn't held to more
+    # than the reference does.
     full = [i for i, r in enumerate(ref) if r.startswith("ok ")]
     nf_path = write([cases[i][1] for i in full])
     ref_nf, cand_nf = lines(REF, "nf", nf_path), lines(CAND, "nf", nf_path)
-    if len(ref_nf) != len(full) or any(nf(r) is None or nf(r)[0] for r in ref_nf):
-        odd = next((r for r in ref_nf if nf(r) is None or nf(r)[0]), f"{len(ref_nf)} lines")
-        return {"ok": False, "detail": f"infra: reference not fully evaluated after rnf ({odd!r})"}
+    if len(ref_nf) != len(full) or any(nf(r) is None for r in ref_nf):
+        odd = next((r for r in ref_nf if nf(r) is None), f"{len(ref_nf)} lines")
+        return {"ok": False, "infra": True, "detail": f"infra: no heap walk of the reference ({odd!r})"}
     if len(cand_nf) != len(full):
         return {"ok": False, "detail": f"candidate printed {len(cand_nf)} nf lines for {len(full)} inputs"}
     lazy = [(i, r, c) for i, r, c in zip(full, ref_nf, cand_nf)
-            if nf(c) is None or nf(c)[0] or nf(c)[1] > nf(r)[1]]
+            if nf(c) is None or nf(c)[0] > nf(r)[0] or nf(c)[1] > nf(r)[1]]
+    ref_lazy = [(i, r) for i, r in zip(full, ref_nf) if nf(r)[0]]
+    if ref_lazy:
+        detail += f"; reference left thunks on {len(ref_lazy)}: " + ", ".join(
+            f"#{i} {cases[i][0]} {len(cases[i][1])}B {r!r}" for i, r in ref_lazy[:3])
     detail += f"; {len(lazy)} of {len(full)} not fully evaluated by the timed pass's rnf"
     if lazy:
         detail += "; first: " + ", ".join(f"#{i} {cases[i][0]} ref={r!r} cand={c[:20]!r}" for i, r, c in lazy[:3])

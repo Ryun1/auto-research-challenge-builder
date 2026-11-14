@@ -461,6 +461,17 @@ pub(crate) fn verify_ok(r: &Run) -> bool {
         == Some(true)
 }
 
+/// A failed verify that the judge blames on the infrastructure, not the
+/// candidate (`"infra": true`, e.g. the pristine reference misbehaving on a
+/// fresh pool): scored as infra_failed, not rejected.
+pub(crate) fn verify_infra(r: &Run) -> bool {
+    serde_json::from_str::<Value>(r.stdout.trim())
+        .ok()
+        .and_then(|v| v["infra"].as_bool())
+        == Some(true)
+        && !verify_ok(r)
+}
+
 pub(crate) fn metrics(r: &Run) -> Option<Value> {
     let v: Value = serde_json::from_str(r.stdout.trim()).ok()?;
     v.get("metrics").filter(|m| m.is_object()).cloned()
@@ -983,6 +994,28 @@ pub fn render(r: &Report) -> String {
 mod tests {
     use super::*;
     use crate::challenge::scaffold;
+
+    /// Only a failed verify that says `"infra": true` is the infrastructure's.
+    #[test]
+    fn verify_infra_needs_the_judges_flag() {
+        let r = |ok: bool, out: &str| Run {
+            ok,
+            stdout: out.into(),
+            secs: 0.0,
+            detail: String::new(),
+        };
+        assert!(verify_infra(&r(
+            false,
+            r#"{"ok": false, "infra": true, "detail": "x"}"#
+        )));
+        assert!(!verify_infra(&r(
+            false,
+            r#"{"ok": false, "detail": "infra: x"}"#
+        )));
+        assert!(!verify_infra(&r(false, "not json")));
+        // A pass is a pass, whatever else the output says.
+        assert!(!verify_infra(&r(true, r#"{"ok": true, "infra": true}"#)));
+    }
 
     /// Output bigger than a pipe buffer must not block until the timeout.
     #[test]
