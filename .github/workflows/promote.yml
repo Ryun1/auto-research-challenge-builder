@@ -96,12 +96,23 @@ jobs:
       # Promotion scores the record's tree too, on the same fresh pool and
       # seed, and record decides on candidate/record (#57): pool-to-pool
       # variance cancels. Each of the two runs still fetches its own pool.
+      # An infra_failed run is scored once more from scratch (new pool, new
+      # seed): the infrastructure failing once shouldn't revert a merge
+      # (Promote 43471245947). Only infra_failed is retried; a rejection or
+      # a second infra_failed stands.
       - run: |
           case "$STAGE" in
             baseline) mode=--baseline ;;
             *) mode=--against-record ;;
           esac
           ./target/release/cb score "$SLUG" $mode --sandbox --out score.json
+          if [ "$(jq -r .status score.json)" = infra_failed ]; then
+            echo "::warning::infra_failed ($(jq -r .reason score.json)); scoring once more"
+            mv score.json score-infra.json
+            # An early infra_failed leaves its workspaces (two built trees) behind.
+            sudo rm -rf "${TMPDIR:-/tmp}"/cb-score-*
+            ./target/release/cb score "$SLUG" $mode --sandbox --out score.json
+          fi
         env:
           SLUG: ${{ needs.detect.outputs.slug }}
           STAGE: ${{ needs.detect.outputs.stage }}

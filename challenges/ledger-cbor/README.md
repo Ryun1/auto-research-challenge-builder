@@ -31,8 +31,9 @@ accepts more is a consensus bug, not a speedup.
 The txs that get timed are verified too, with the same seed. And because the
 timed pass forces a decoded tx with `rnf`, whose instance for `Sized` is in
 `candidate/`, verify repeats that decode + `rnf` and walks the heap with
-judge code (`harness/HeapWalk.hs`): nothing may be left unevaluated, and the
-value may hold no more function closures than the reference's.
+judge code (`harness/HeapWalk.hs`): on each tx, the value may hold no more
+unevaluated closures and no more function closures than the reference's. That
+is none on almost every tx; upstream's own `rnf` leaves a few thunks on some.
 
 **Score.** Callgrind instructions to decode 800 seeded txs once, minus a 0-pass
 run (start-up plus reading the input). The timed pass is `harness decode`:

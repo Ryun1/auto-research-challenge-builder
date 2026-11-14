@@ -10,7 +10,7 @@
 //! - `comment` (trusted): renders a score claim as a PR comment.
 
 use crate::challenge::Spec;
-use crate::preflight::{self, host, metrics, run_in, verify_ok};
+use crate::preflight::{self, host, metrics, run_in, verify_infra, verify_ok};
 use crate::{haskellpolicy, paths, policy, rustpolicy};
 use serde_json::{json, Value};
 use std::path::{Path, PathBuf};
@@ -407,6 +407,11 @@ pub fn score(
     out["seed"] = seed.to_string().into();
     let v = run_in(sandbox, &env, &ws, &spec.commands.verify, seed);
     out["verify"] = json!({"ok": verify_ok(&v), "detail": v.stdout.trim().chars().take(2000).collect::<String>(), "secs": v.secs});
+    if verify_infra(&v) {
+        out["status"] = "infra_failed".into();
+        out["reason"] = "verify: the judge reported an infrastructure failure".into();
+        return Ok(out);
+    }
     if !verify_ok(&v) {
         out["status"] = "rejected".into();
         out["reason"] = "verify failed".into();
