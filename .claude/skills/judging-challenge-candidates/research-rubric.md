@@ -12,7 +12,7 @@ A research challenge is an open search space. Participants choose which axes to 
 | **R4 Bounded** | One verify+measure run finishes within 6 h on some named runner (same as G3). |
 | **R5 Baseline** | A reference implementation exists, passes R2, and has been measured on every axis (same as G4). |
 
-Each gate is `pass`, `fail` or `pending` (needs a measurement not yet taken). Any `pending` makes the verdict **spike needed**, never pass.
+Each gate is `pass`, `fail` or `pending`. R1 and R3 can pass on a written design. R2, R4 and R5 pass only on something built or measured; until then they are `pending`. Any `pending` makes the verdict **spike needed**, never launchable.
 
 R2 is the hard one. When directions can change the protocol itself (e.g. a new commitment scheme), the participant controls both sides and a "verifier accepts" check proves nothing. Handle it one of these ways, and say which:
 
@@ -22,7 +22,7 @@ R2 is the hard one. When directions can change the protocol itself (e.g. a new c
 
 Mark a frozen check of a conjectured or heuristic bound (e.g. a FRI security formula) as `mechanical (conjectured)`.
 
-**Directions R2 can't admit yet** (the participant would write both prover and verifier) are not dropped: list them as a **deferred contract** with the independent check that would make them admissible. They usually hold the most ambitious ideas, so the verdict names them.
+**Directions R2 can't admit yet** (the participant would control both the output and the code that checks it) are not dropped: list them as a **deferred contract** with the independent check that would make them admissible. They usually hold the most ambitious ideas, so the verdict names them.
 
 **Each contract states the participant's choice space:** which parameters they may pick (e.g. hash family, FRI parameters), and the floors those choices must respect (e.g. security bits ≥ N, with a source for N).
 
@@ -34,15 +34,15 @@ Mark a frozen check of a conjectured or heuristic bound (e.g. a FRI security for
 | Axis tension | 2 | axes trade off (cheaper step, more queries; less memory, more time), so the map has real shape | all axes move together: really a simple challenge |
 | Property checkability | 3 | every preserved property mechanically checked at the boundary | only R2's core is checked; the rest are declared claims |
 | Component entry points | 2 | contributors can improve one component alone against its own contract | only whole-system submissions are meaningful |
-| Value | 3 | a new direction would change practice (Starknet or broadly) | curiosity only |
+| Value | 3 | a new direction would change practice in the target ecosystem or broadly | curiosity only |
 | Expert scarcity | 2 | <50 people could seriously work on it | crowded field |
 | Fidelity | 2 | contract = real use | toy proxy |
-| Gaming resistance | 2 | outputs checked by an independent oracle on salted inputs | participant code checked by its own tests |
+| Gaming resistance | 2 | salted inputs, no fixed test set to overfit, and participant code can't reach the measurement or checker state | fixed public inputs; participant code shares a process with the measurement |
 | Laptop validation | 2 | produce + verify + measure on a laptop in minutes | needs a big machine even to check correctness |
 | Eval cost | 1 | seconds–minutes | hours |
 | Seed literature | 1 | papers and code describing several directions | tribal knowledge |
 
-Laptop and hosting follow PLAN.md §1: record `produce`/`verify`/`score` per laptop class as measured facts, plus a separate **hostable here** flag (2 vCPU / 8 GB / 14 GB, ≤60 min).
+Laptop and hosting follow PLAN.md §1: record `produce`/`verify`/`score` per laptop class, plus a separate **hostable here** flag (2 vCPU / 8 GB / 14 GB, ≤60 min). In a desk evaluation, write each value with `(estimate)` and leave hostable as `unknown`; the spike checklist measures them.
 
 ## Output: `candidates/research/<slug>.md`
 
