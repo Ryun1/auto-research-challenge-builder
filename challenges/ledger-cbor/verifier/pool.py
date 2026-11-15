@@ -14,16 +14,35 @@ H = {"User-Agent": "cb-ledger-cbor", "Content-Type": "application/json"}
 PROTO_MAJOR = 11  # the harness decodes at PV 11; a hard fork needs a new pin
 
 
-def call(path, body=None, tries=4):
-    for i in range(tries):
+# Koios's public tier sheds load with 429s and 503s, sometimes for minutes
+# (PR #84: two scoring runs lost to it in a row). Each call keeps retrying
+# with capped exponential backoff and jitter, honouring Retry-After, until
+# PATIENCE seconds have passed since its first try.
+PATIENCE, MAX_WAIT = 360, 60
+
+
+def wait_for(e, i):
+    """Seconds to wait after failed try i: Retry-After if Koios gives one."""
+    after = getattr(e, "headers", None) and e.headers.get("Retry-After")
+    if after and after.strip().isdigit():
+        return min(int(after), MAX_WAIT * 2)
+    return min(3 * 2 ** i, MAX_WAIT) * random.uniform(0.75, 1.25)
+
+
+def call(path, body=None):
+    start, i = time.monotonic(), 0
+    while True:
         try:
             data = None if body is None else json.dumps(body).encode()
             req = urllib.request.Request(K + path, data=data, headers=H)
             return json.load(urllib.request.urlopen(req, timeout=60))
-        except Exception as e:  # rate limit or transient: back off, then give up
-            if i == tries - 1:
-                raise RuntimeError(f"koios {path}: {e}")
-            time.sleep(2 ** i * 3)
+        except Exception as e:  # rate limit, outage or transient: back off, then give up
+            w = wait_for(e, i)
+            if time.monotonic() - start + w > PATIENCE:
+                raise RuntimeError(f"koios {path[:80]}: {e} (gave up after {i + 1} tries)")
+            print(f"koios {path[:40]}: {e}; retry in {w:.0f}s", file=sys.stderr)
+            time.sleep(w)
+            i += 1
 
 
 def main():
