@@ -22,10 +22,14 @@ Candidates come in two types, judged by different rubrics. **Classify first.** J
 
 ## Classifying
 
-The deciding test: **must every good submission produce the same output as the reference?**
+The deciding test: **can every good submission be ranked by one or two numbers, under a checker that is the same for all of them?**
 
-- Yes: the output is fixed and only the cost of producing it changes → **simple**. This holds even with two trading-off metrics (memory and runtime): combine them in `objective.expr`, or rank one and guard the other, as the Rust kit does with Ir ranked and wall time guarded.
-- No: good submissions may produce different outputs that meet the same guarantees, because they change the architecture, protocol, encoding or algorithm family. Typical wording is "design", "better" or "redesign" → **research**.
+- Yes → **simple**. Two cases:
+  - the output is fixed and only its cost changes (a bit-exact oracle), or
+  - the output is data a fixed checker scores (math/proof families: a sorting network checked by the 0-1 principle, a Heesch tiling with its certificate).
+
+  This holds even with two trading-off metrics (memory and runtime): combine them in `objective.expr`, or rank one and guard the other, as the Rust kit does with Ir ranked and wall time guarded.
+- No: "good" spans several axes with no agreed scalar, and the interesting moves change architecture, protocol, encoding or algorithm family, so outputs differ and must instead meet guarantees at a contract boundary. Typical wording: "design", "better", "redesign" → **research**.
 - The request is too vague to name even one contract (e.g. "make X better"): ask the requester what must stay true and what they care about **before** writing a file. If you can't ask, judge it as research and list your assumed contract as the first open question in the verdict.
 
 Slugs are lowercase-hyphenated, short, and named after the project and target (`plonky3-poseidon2`, `stwo-prover`).
@@ -34,7 +38,7 @@ A research request stays research. If a narrow scalar slice is also attractive (
 
 ## Workflow (both types)
 
-1. Read the source: the repo at a pinned commit, its docs, issues/PRs, papers. Check the URL is still where development happens; if work moved, pin the new home and say so in the Source line.
+1. Read the source: the repo at a pinned commit, its docs, issues/PRs, papers. Check the URL is still where development happens; if work moved, pin the new home and say so in the Source line. If the target spans several repos, pin each one.
 2. Classify, as above.
 3. Propose the shape:
    - **Simple:** metric, editable surface, oracle, min improvement, noise plan.
