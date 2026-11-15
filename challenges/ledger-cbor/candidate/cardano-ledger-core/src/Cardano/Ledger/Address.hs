@@ -482,9 +482,13 @@ fromCborRigorousBothAddr ::
   Decoder s (Addr, CompactAddr)
 fromCborRigorousBothAddr isPtrLenient = do
   sbs <- decCBOR
-  flip evalStateT 0 $ do
-    addr <- decodeAddrStateLenientT isPtrLenient False sbs
-    pure (addr, UnsafeCompactAddr sbs)
+  -- The address parser only needs MonadFail, so it runs over the already decoded bytes
+  -- in the pure Fail monad (as decompactAddr does) instead of in StateT over the
+  -- Decoder. It makes the same checks in the same order; its first failure message
+  -- becomes the decoder failure, exactly where the Decoder's own fail would have stopped.
+  case runFail $ evalStateT (decodeAddrStateLenientT isPtrLenient False sbs) 0 of
+    Left err -> fail err
+    Right addr -> pure (addr, UnsafeCompactAddr sbs)
 {-# INLINE fromCborRigorousBothAddr #-}
 
 -- | Prior to Babbage era we did not check if a binary blob representing an address was
