@@ -12,8 +12,8 @@ Candidates come in two types, judged by different rubrics. **Classify first.** J
 | | Simple | Research |
 |---|---|---|
 | Asks for | 1–2 numbers improved (faster, less memory, fewer Ir) | "better", several axes, new architectures |
-| Submission | edits to a small fixed surface | edits **or** a whole replacement codebase meeting a contract |
-| Correctness | bit-exact vs a reference oracle | preserved properties checked at a contract boundary |
+| Submission | edits to a small fixed surface (code, or data for math/proof) | edits **or** a whole replacement codebase meeting a contract |
+| Correctness | bit-exact vs a reference oracle, or a fixed checker scoring submitted data | preserved properties checked at a contract boundary |
 | Outcome | a record line; promote if ≥ min improvement | a map of directions; no winner, every measured submission counts |
 | Novelty | not tracked | self-declared: "new direction" or "builds on <direction>" |
 | Example | `challenges/ledger-cbor` | [chemistry-walk](https://github.com/teddyjfpender/quantum-autoresearch/blob/main/challenges/chemistry-walk/README.md) |
