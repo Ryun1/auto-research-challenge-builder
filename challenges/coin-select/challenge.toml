@@ -10,7 +10,7 @@ setup = "./setup.sh"        # trusted, before any submission byte runs; may use 
 [submissions]
 max_bytes  = 4194304        # per submission dir
 toolchains = ["python3 (ubuntu-24.04 image)", "rust stable via rustup (ubuntu-24.04 image)"]
-writable   = ["~/.cargo"]   # build-sandbox overlays (writes vanish after the build)
+writable   = ["~/.cargo", "~/.rustup"]   # build-sandbox overlays (writes vanish after the build)
 
 [limits]                    # per participant process TREE, enforced by `cb participant`
 cpu_secs   = 60
