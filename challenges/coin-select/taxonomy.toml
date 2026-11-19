@@ -1,8 +1,8 @@
 # Maintainers edit this file in their own PR, never in a submission PR.
 # Adding axes or values keeps `version`. Renaming or removing one changes what
 # earlier labels mean: copy this file to taxonomy-v<version>.toml first, then
-# bump `version`. Every results.jsonl row records the version it was labelled
-# under (`taxonomy_version`).
+# bump `version`. results.jsonl rows record the version they were labelled under
+# (`taxonomy_version`); rows without it predate the field and mean version 1.
 version = 1
 
 [[axes]]

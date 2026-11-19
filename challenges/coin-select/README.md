@@ -21,8 +21,8 @@ min-ada model, and measures five axes from those same transactions:
 | `latency_ms` | median time from `pay` to reply, measured by the judge | minimise |
 | `peak_rss_mib` | peak memory, measured by `cb participant` | minimise |
 
-Before launch, preflight checks that the judge rejects four wrong submissions and
-ignores a fifth's claims about itself (`preflight/broken/`):
+Preflight (run before launch and in CI) checks that the judge rejects four wrong
+submissions and ignores a fifth's claims about itself (`preflight/broken/`):
 
 | variant | what it does | judge must |
 |---|---|---|

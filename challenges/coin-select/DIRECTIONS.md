@@ -1,11 +1,14 @@
 # coin-select: directions
 
-What has been tried and what is open. Maintainers keep this file up to date (in the
-same PR as any taxonomy edit); participants never edit it. It is a guide, not a
+What has been tried and what is open. Maintainers keep this file up to date after
+submissions are accepted (and in the same PR as any taxonomy edit); participants
+never edit it. It is a guide, not a
 rule: a direction missing from it is still welcome.
 
-Numbers are the medians of the two accepted runs on main, from `results.jsonl`.
-The axes are defined in `README.md`. Last updated 2026-11-19.
+Numbers are the medians over the two accepted runs on main, from `results.jsonl`.
+Every run draws fresh scenarios from a new seed, so a difference smaller than the
+axis tolerance in `challenge.toml` is noise. The axes are defined in `README.md`.
+Last updated 2026-11-19.
 
 ## Explored
 
@@ -16,17 +19,17 @@ The axes are defined in `README.md`. Last updated 2026-11-19.
 | `random-improve-consolidate` | random-improve | 40.1 | 0.06 | 3.34 | 0.034 | 3.0 |
 
 **largest-first** (`baseline`, Python). Spends the biggest UTxOs first, so a
-payment needs few inputs and pays the lowest fees. The small UTxOs are never
+payment needs few inputs and pays the lowest fees. The small UTxOs are rarely
 chosen and pile up: about 43 are left under 2 ADA at the end of a scenario.
 
 **random-improve** (`random-improve`, Rust). CIP-2's default: random inputs until
 the payment is covered, then add more while the total moves towards twice the
-payment, with change outputs shaped like the payment. Random picks spend small UTxOs
-along with large ones, so dust falls about 11x and inputs per transaction rise
-about 2.5x, for about 7% more fees. `random-improve-consolidate` builds on it.
-It also spends up to 3 of the smallest UTxOs under 2 ADA when each is worth more
-than its input fee. That takes dust to about zero, and the fee change is within
-the axis tolerance.
+payment, with change outputs shaped like the payment. Dust falls about 11x and
+inputs per transaction rise about 2.5x, for about 7% more fees. The likely reason
+is that random picks spend small UTxOs along with large ones; open item 2 tests
+it. `random-improve-consolidate` builds on it: it also spends up to 3 of the
+smallest UTxOs under 2 ADA when each is worth more than its input fee. That takes
+dust to about zero, and the fee change is within the axis tolerance.
 
 The latency and memory gap between `baseline` and the other two mixes two
 changes, language (Python against Rust) and strategy. No submission yet
@@ -40,10 +43,11 @@ refutes one is a useful result.
 
 1. **Largest-first in a compiled language.** Port `baseline` as it is
    (`builds-on baseline`).
-   - Expected: fees, dust and inputs/tx identical (same algorithm, deterministic);
-     latency and peak RSS near `random-improve`'s.
-   - Cheapest test: the port itself. If latency stays near 0.085 ms, the gap
-     above comes from the strategy, not the language.
+   - Expected: on the same seed, the same fees, dust and inputs/tx as `baseline`
+     (same algorithm, deterministic); latency and peak RSS near `random-improve`'s.
+   - Cheapest test: run the judge locally with one `CB_SEED` on both and compare
+     (`README.md`). If latency stays near the baseline's, the gap above comes from
+     the strategy, not the language.
 2. **Largest-first plus consolidation.** Add `random-improve-consolidate`'s dust
    rule to `baseline` (`builds-on baseline`).
    - Expected: dust falls far below 43 while inputs/tx and fees stay well under

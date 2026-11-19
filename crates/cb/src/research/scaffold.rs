@@ -68,8 +68,8 @@ file = "taxonomy.toml"
 const TAXONOMY: &str = r#"# Maintainers edit this file in their own PR, never in a submission PR.
 # Adding axes or values keeps `version`. Renaming or removing one changes what
 # earlier labels mean: copy this file to taxonomy-v<version>.toml first, then
-# bump `version`. Every results.jsonl row records the version it was labelled
-# under (`taxonomy_version`).
+# bump `version`. results.jsonl rows record the version they were labelled under
+# (`taxonomy_version`); rows without it predate the field and mean version 1.
 version = 1
 
 [[axes]]
@@ -123,7 +123,7 @@ exit 1
 
 const INTERFACE: &str = "# Contract main@1: interface\n\nTODO: what a submission must provide (the files `build.sh` leaves behind, how the\njudge talks to it, input and output formats, time and memory limits).\n";
 
-const DIRECTIONS: &str = "# Directions\n\nWhat has been tried and what is open. Maintainers keep this file up to date (in the\nsame PR as any taxonomy edit); participants never edit it. A direction missing from\nit is still welcome.\n\n## Explored\n\nTODO: one short paragraph per direction with accepted submissions: what it does,\nwhich axes it moved (numbers from `results.jsonl`) and the submission ids.\n\n## Open\n\nTODO: for each, the mechanism, the expected effect on which axes, and the cheapest\ntest that could show it wrong. Say what is unknown rather than guess.\n";
+const DIRECTIONS: &str = "# Directions\n\nWhat has been tried and what is open. Maintainers keep this file up to date after\nsubmissions are accepted (and in the same PR as any taxonomy edit); participants\nnever edit it. A direction missing from\nit is still welcome.\n\n## Explored\n\nTODO: one short paragraph per direction with accepted submissions: what it does,\nwhich axes it moved (numbers from `results.jsonl`) and the submission ids.\n\n## Open\n\nTODO: for each, the mechanism, the expected effect on which axes, and the cheapest\ntest that could show it wrong. Say what is unknown rather than guess.\n";
 
 const CHOICES: &str = "# Contract main@1: choice space\n\nTODO: the decisions open to participants (algorithms, data structures, languages,\ntrade-offs between axes). Not rules: a map of where submissions can differ.\n";
 
