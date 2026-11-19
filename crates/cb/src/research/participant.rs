@@ -82,6 +82,47 @@ pub fn exit_code(r: &Report) -> i32 {
     }
 }
 
+/// Decides (status, exit code, signal) from the raw wait result.
+fn classify(
+    sandbox: bool,
+    killed: bool,
+    mut code: Option<i32>,
+    mut signal: Option<i32>,
+    elapsed: f64,
+    cpu: f64,
+    limits: &Limits,
+) -> (&'static str, Option<i32>, Option<i32>) {
+    if sandbox {
+        // `timeout` reports a signalled command as 128+n.
+        if let Some(c) = code.filter(|c| *c > 128 && *c < 128 + 65) {
+            signal = Some(c - 128);
+        }
+    }
+    // In the sandbox `timeout` may exit 124, 137 (-k escalation) or 128+SIGTERM:
+    // any failure after the wall time is a timeout.
+    let failed = code != Some(0) || signal.is_some();
+    let timed_out = if sandbox {
+        failed && elapsed >= limits.wall_secs as f64
+    } else {
+        killed
+    };
+    let hit_cpu = matches!(signal, Some(s) if s == libc::SIGXCPU || s == libc::SIGKILL)
+        && cpu >= limits.cpu_secs as f64 - 0.5;
+    let state = if timed_out {
+        "timeout"
+    } else if hit_cpu {
+        "cpu_limit"
+    } else if !failed {
+        "ok"
+    } else {
+        "failed"
+    };
+    if code.is_none() && signal.is_none() {
+        code = Some(1);
+    }
+    (state, code, signal)
+}
+
 /// Runs `cmd` in the current directory.
 pub fn run(cmd: &[String], limits: &Limits, sandbox: bool) -> Result<Report, String> {
     let cwd = std::env::current_dir().map_err(|e| format!("cwd: {e}"))?;
@@ -188,33 +229,9 @@ fn run_in(cwd: &Path, cmd: &[String], limits: &Limits, sandbox: bool) -> Result<
         rss / 1024.0 // KiB
     };
 
-    let mut code = libc::WIFEXITED(status).then(|| libc::WEXITSTATUS(status));
-    let mut signal = libc::WIFSIGNALED(status).then(|| libc::WTERMSIG(status));
-    if sandbox {
-        // `timeout` reports a signalled command as 128+n.
-        if let Some(c) = code.filter(|c| *c > 128 && *c < 128 + 65) {
-            signal = Some(c - 128);
-        }
-    }
-    let timed_out = if sandbox {
-        code == Some(124) && elapsed >= limits.wall_secs as f64
-    } else {
-        killed
-    };
-    let hit_cpu = matches!(signal, Some(s) if s == libc::SIGXCPU || s == libc::SIGKILL)
-        && cpu >= limits.cpu_secs as f64 - 0.5;
-    let state = if timed_out {
-        "timeout"
-    } else if hit_cpu {
-        "cpu_limit"
-    } else if code == Some(0) && signal.is_none() {
-        "ok"
-    } else {
-        "failed"
-    };
-    if code.is_none() && signal.is_none() {
-        code = Some(1);
-    }
+    let code = libc::WIFEXITED(status).then(|| libc::WEXITSTATUS(status));
+    let signal = libc::WIFSIGNALED(status).then(|| libc::WTERMSIG(status));
+    let (state, code, signal) = classify(sandbox, killed, code, signal, elapsed, cpu, limits);
     Ok(Report {
         status: state.into(),
         exit_code: code,
@@ -255,6 +272,22 @@ mod tests {
             assert!(s.contains(needle), "missing {needle:?} in:\n{s}");
         }
         assert!(s.find("mount --bind").unwrap() < s.find("tmpfs").unwrap());
+    }
+
+    #[test]
+    fn classify_cases() {
+        let l = Limits::default(); // cpu 60, wall 120
+        let c = |sb, killed, code, sig, el, cpu| classify(sb, killed, code, sig, el, cpu, &l).0;
+        assert_eq!(c(true, false, Some(137), None, 121.0, 1.0), "timeout");
+        assert_eq!(c(true, false, Some(124), None, 120.5, 1.0), "timeout");
+        assert_eq!(
+            c(true, false, Some(128 + 24), None, 10.0, 60.0),
+            "cpu_limit"
+        );
+        assert_eq!(c(true, false, Some(137), None, 10.0, 1.0), "failed");
+        assert_eq!(c(false, true, None, Some(9), 121.0, 1.0), "timeout");
+        assert_eq!(c(false, false, Some(0), None, 1.0, 0.1), "ok");
+        assert_eq!(c(true, false, Some(0), None, 130.0, 0.1), "ok");
     }
 
     #[test]
