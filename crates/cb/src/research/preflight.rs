@@ -148,9 +148,17 @@ fn taxonomy_check(r: &mut Report, dir: &Path, spec: &ResearchSpec) {
     }
 }
 
+/// CI on Linux must have the sandbox; macOS runners (and laptops) can't.
+fn sandbox_required(ci: bool, runner_os: Option<&str>) -> bool {
+    ci && runner_os.is_none_or(|os| os == "Linux")
+}
+
 fn sandbox_check(r: &mut Report, dir: &Path, spec: &ResearchSpec, seed: u64) -> Result<(), String> {
     if !preflight::build_sandbox_available() {
-        let ci = std::env::var_os("CI").is_some();
+        let ci = sandbox_required(
+            std::env::var_os("CI").is_some(),
+            std::env::var("RUNNER_OS").ok().as_deref(),
+        );
         r.push(
             "build sandbox",
             if ci { Status::Fail } else { Status::Warn },
@@ -411,6 +419,16 @@ pub fn run_all(dir: &Path) -> Result<Report, String> {
             );
             continue;
         }
+        // `EXPECT`: its first non-empty line is `valid` or a substring the
+        // rejection reason must contain.
+        let expect = std::fs::read_to_string(vdir.join("EXPECT"))
+            .ok()
+            .and_then(|t| {
+                t.lines()
+                    .map(str::trim)
+                    .find(|l| !l.is_empty())
+                    .map(String::from)
+            });
         let v = match m(Source::Dir(&vdir), seed_a) {
             Ok(v) => v,
             Err(e) => {
@@ -439,7 +457,8 @@ pub fn run_all(dir: &Path) -> Result<Report, String> {
                     field(&v, "reason")
                 ),
             );
-        } else if name == "self-report" {
+        } else if expect.as_deref() == Some("valid") || (name == "self-report" && expect.is_none())
+        {
             if !valid(&v) {
                 r.push(&label, Status::Fail, format!("must be valid: {}", why(&v)));
                 continue;
@@ -478,11 +497,21 @@ pub fn run_all(dir: &Path) -> Result<Report, String> {
             }
         } else {
             match field(&v, "status").as_str() {
-                "rejected" => r.push(
-                    &label,
-                    Status::Pass,
-                    format!("rejected: {}", field(&v, "reason")),
-                ),
+                "rejected" => match &expect {
+                    Some(e) if !field(&v, "reason").contains(e.as_str()) => r.push(
+                        &label,
+                        Status::Fail,
+                        format!(
+                            "rejected, but not for the expected reason (EXPECT {e:?}): {}",
+                            field(&v, "reason")
+                        ),
+                    ),
+                    _ => r.push(
+                        &label,
+                        Status::Pass,
+                        format!("rejected: {}", field(&v, "reason")),
+                    ),
+                },
                 "infra_failed" => r.push(
                     &label,
                     Status::Fail,
@@ -570,6 +599,48 @@ mod tests {
         let r = run_all(&dir).unwrap();
         assert_eq!(check(&r, "broken: off-by-one").status, Status::Fail);
         assert!(r.blocked());
+    }
+
+    #[test]
+    fn sandbox_required_only_on_linux_ci() {
+        assert!(sandbox_required(true, Some("Linux")));
+        assert!(sandbox_required(true, None));
+        assert!(!sandbox_required(true, Some("macOS")));
+        assert!(!sandbox_required(false, Some("Linux")));
+        assert!(!sandbox_required(false, None));
+    }
+
+    fn expect(dir: &std::path::Path, name: &str, text: &str) {
+        std::fs::write(dir.join("preflight/broken").join(name).join("EXPECT"), text).unwrap();
+    }
+
+    #[test]
+    fn expect_substring_must_match_the_reason() {
+        let dir = toy_ready(&tmp("exp-sub"), "toy", GOOD_JUDGE);
+        expect(&dir, "off-by-one", "\n  check correct\nignored\n");
+        let r = run_all(&dir).unwrap();
+        assert_eq!(check(&r, "broken: off-by-one").status, Status::Pass);
+        expect(&dir, "off-by-one", "fee below min_fee\n");
+        let r = run_all(&dir).unwrap();
+        let c = check(&r, "broken: off-by-one");
+        assert_eq!(c.status, Status::Fail, "{}", c.detail);
+        assert!(c.detail.contains("expected reason"), "{}", c.detail);
+    }
+
+    #[test]
+    fn expect_valid_must_measure_valid_like_the_baseline() {
+        let dir = toy_ready(&tmp("exp-valid"), "toy", GOOD_JUDGE);
+        // A valid variant (answer 42, same axes as the baseline) passes.
+        broken(&dir, "extra", "42");
+        expect(&dir, "extra", "valid\n");
+        let r = run_all(&dir).unwrap();
+        assert_eq!(check(&r, "broken: extra").status, Status::Pass);
+        // Expecting valid of a rejected submission fails.
+        expect(&dir, "off-by-one", "valid\n");
+        let r = run_all(&dir).unwrap();
+        let c = check(&r, "broken: off-by-one");
+        assert_eq!(c.status, Status::Fail, "{}", c.detail);
+        assert!(c.detail.contains("must be valid"), "{}", c.detail);
     }
 
     #[test]
