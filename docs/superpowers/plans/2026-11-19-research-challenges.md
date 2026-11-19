@@ -85,7 +85,7 @@
 - Modify: `crates/cb/src/main.rs` (`Participant { #[arg(long)] report: Option<PathBuf>, #[arg(last = true, required = true)] cmd: Vec<String> }`, exits with the participant's code), `crates/cb/src/preflight.rs` (make `sq` and `build_sandbox_available` `pub(crate)` if not already)
 
 **Interfaces:**
-- Produces: `pub struct Limits { cpu_secs, memory_mib, processes, file_mib, wall_secs: u64 }` read via `pub fn limits_from_env() -> Limits` (`CB_LIMITS` JSON, else `research::spec::Limits::default()` values); `pub struct Report { pub status: String, pub exit_code: Option<i32>, pub signal: Option<i32>, pub wall_secs: f64, pub cpu_secs: f64, pub peak_rss_mib: f64 }` (`Serialize`); `pub fn run(cmd: &[String], limits: &Limits, sandbox: bool) -> Result<Report, String>` (stdio inherited); `pub fn sandbox_script(cwd: &Path, limits: &Limits, cmd: &[String]) -> String` (spec §4 sandbox steps, pure, testable); `pub fn exit_code(r: &Report) -> i32` (exit code, else 128+signal, 124 for timeout).
+- Produces: `pub fn limits_from_env() -> research::spec::Limits` (`CB_LIMITS` JSON, else `Limits::default()`; reuse Task 1's type, do not define another); `pub struct Report { pub status: String, pub exit_code: Option<i32>, pub signal: Option<i32>, pub wall_secs: f64, pub cpu_secs: f64, pub peak_rss_mib: f64 }` (`Serialize`); `pub fn run(cmd: &[String], limits: &research::spec::Limits, sandbox: bool) -> Result<Report, String>` (stdio inherited); `pub fn sandbox_script(cwd: &Path, limits: &Limits, cmd: &[String]) -> String` (spec §4 sandbox steps, pure, testable); `pub fn exit_code(r: &Report) -> i32` (exit code, else 128+signal, 124 for timeout).
 - Plain mode: `pre_exec` sets `setpgid(0,0)`, `RLIMIT_CPU`, `RLIMIT_FSIZE`, and on Linux `RLIMIT_AS`; the parent polls `wait4(pid, WNOHANG, &rusage)` and at `wall_secs` kills `-pgid` with SIGKILL → `status "timeout"`. `cpu_limit` when killed by SIGXCPU/SIGKILL with `cpu_secs >= limit - 0.5`. Peak RSS from `ru_maxrss` (bytes on macOS, KiB on Linux).
 - Sandbox mode: `sudo -n unshare --mount --net --pid --fork --kill-child --mount-proc -- bash -c <sandbox_script>`; same wait4/report; `timeout` exit 124 → `timeout`.
 
@@ -95,7 +95,7 @@
 ### Task 5: `cb measure`
 
 **Files:**
-- Create: `crates/cb/src/research/measure.rs`, `crates/cb/tests/research_measure.rs` (integration test: uses `env!("CARGO_BIN_EXE_cb")`)
+- Create: `crates/cb/src/research/measure.rs`, `crates/cb/src/research/testkit.rs` (`#[cfg(test)] pub fn toy(root: &Path, slug: &str, judge: &str) -> PathBuf`: Task 2 scaffold, status open, judge replaced by the given bash script, baseline made to pass), `crates/cb/tests/research_measure.rs` (integration test: uses `env!("CARGO_BIN_EXE_cb")`)
 - Modify: `crates/cb/src/main.rs` (`Measure { slug, #[arg(long, default_value="challenges")] root, #[arg(long, conflicts_with="id")] submission: Option<PathBuf>, #[arg(long)] id: Option<String>, #[arg(long)] sandbox: bool, #[arg(long, default_value="measure.json")] out: PathBuf }`)
 
 **Interfaces:**
@@ -142,7 +142,7 @@
 - Consumes: Task 5 `measure(.., Source::Id/Dir, sandbox, Some(seed))`.
 - Produces: `pub fn run_all(dir: &Path) -> Result<preflight::Report, String>` with check names exactly: `threat model`, `contracts`, `taxonomy`, `build sandbox`, `baseline`, `determinism`, `salted inputs`, `axis noise: <axis>` (one per axis), `broken: <name>`, `hostable` (spec §7). The build-sandbox probe runs `Mode::Build` with `dir = ws`, `outputs = ["submissions/baseline"]` and asserts: `contracts/` not writable, home not writable, no sudo, no network, `submissions/baseline/x` writable, overlay write discarded.
 
-- [ ] **Step 1: Tests**: a toy (Task 2 scaffold + working bash judge from Task 5's test helper — move that helper to `research/testkit.rs` `#[cfg(test)] pub fn toy(root, slug, judge: &str) -> PathBuf`) with broken variants that fail and a `self-report` variant that passes: `toy_preflight_passes` (not blocked); `broken_variant_accepted_blocks` (an `off-by-one` that passes → `broken: off-by-one` Fail); `self_report_far_from_baseline_blocks`; `noisy_axis_over_tolerance_blocks` (judge emits a random axis; detail suggests a tolerance); `deferred_listed` (contracts detail names `admits_when`); `scaffold_blocks_until_written` (fresh scaffold → blocked).
+- [ ] **Step 1: Tests**: a toy (`research::testkit::toy` from Task 5) with broken variants that fail and a `self-report` variant that passes: `toy_preflight_passes` (not blocked); `broken_variant_accepted_blocks` (an `off-by-one` that passes → `broken: off-by-one` Fail); `self_report_far_from_baseline_blocks`; `noisy_axis_over_tolerance_blocks` (judge emits a random axis; detail suggests a tolerance); `deferred_listed` (contracts detail names `admits_when`); `scaffold_blocks_until_written` (fresh scaffold → blocked).
 - [ ] **Step 2–4:** fail, implement, pass. **Step 5:** Commit `research: preflight`.
 
 ### Task 9: Pilot challenge `coin-select`
