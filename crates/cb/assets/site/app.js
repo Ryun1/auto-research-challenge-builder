@@ -763,13 +763,13 @@
     });
     if (!pts.length) { add(host, empty("No accepted submissions have measurements on these axes yet.")); return; }
     var W = Math.max(280, Math.round(host.clientWidth || 600));
-    var H = W < 520 ? 320 : 400;
+    var H = Math.round(Math.min(420, Math.max(300, W * 0.6)));
     var m = { l: W < 520 ? 60 : 66, r: 16, t: 14, b: 50 };
     var xe = extent(pts.reduce(function (a, p) { return a.concat([p.xr.min, p.xr.max]); }, []));
     var ye = extent(pts.reduce(function (a, p) { return a.concat([p.yr.min, p.yr.max]); }, []));
     function X(v) { return m.l + (v - xe[0]) / (xe[1] - xe[0]) * (W - m.l - m.r); }
     function Y(v) { return H - m.b - (v - ye[0]) / (ye[1] - ye[0]) * (H - m.t - m.b); }
-    var root = svg("svg", { width: W, height: H, viewBox: "0 0 " + W + " " + H, role: "group", "aria-label": "Trade-off map: " + ax.id + " against " + ay.id, "class": "map-svg" });
+    var root = svg("svg", { width: "100%", height: "auto", viewBox: "0 0 " + W + " " + H, role: "group", "aria-label": "Trade-off map: " + ax.id + " against " + ay.id, "class": "map-svg" });
     // grid and ticks
     niceTicks(ye[0], ye[1], H < 360 ? 4 : 5).forEach(function (t) {
       add(root, svg("line", { x1: m.l, x2: W - m.r, y1: Y(t), y2: Y(t), "class": "grid" }));

@@ -390,3 +390,14 @@ td.detail { overflow-wrap: anywhere; }
 .pick-axis select { min-width: 0; }
 @media (max-width: 640px) { .pick-axis select { width: 100%; } }
 @media (max-width: 1000px) { .body-research .aside { grid-row: auto; } }
+.map-svg { width: 100%; height: auto; }
+table.checks td, table.checks td.detail { white-space: normal; overflow-wrap: anywhere; min-width: 0; }
+table.checks td:nth-child(2), table.checks td:nth-child(3) { white-space: nowrap; }
+@media (max-width: 640px) { table.checks th, table.checks td { padding-right: 8px; } table.checks td.detail { min-width: 90px; } }
+@media (max-width: 640px) {
+  table.checks thead { display: none; }
+  table.checks tr { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 12px; padding: 10px 4px; border-bottom: 1px solid var(--line); }
+  table.checks td { border: 0; padding: 0; }
+  table.checks td.detail { flex-basis: 100%; min-width: 0; color: var(--muted); font-size: 13.5px; }
+  table.checks td.detail:empty { display: none; }
+}
