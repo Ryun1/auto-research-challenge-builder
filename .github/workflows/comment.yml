@@ -7,6 +7,10 @@
 # workflow token cannot bypass. The results commit is pushed with a deploy key
 # instead. The key is a secret of the `results` environment, which only runs
 # on main can use, so a workflow on a collaborator's branch cannot read it.
+#
+# Research challenges: a valid PR measurement is recorded, then the submission
+# directory is landed on main (own push, no [skip actions]) so Accept measures
+# it twice on main, and the PR is closed.
 name: Comment
 
 on:
@@ -40,6 +44,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: main
+          fetch-depth: 0 # the landing step re-gates against main and fetches the PR head
           ssh-key: ${{ secrets.RESULTS_DEPLOY_KEY }} # origin becomes SSH; the push below uses it
       # By name into fixed paths: a lone artifact would otherwise be extracted
       # without its name directory. score is absent when the gate refused.
@@ -74,7 +79,15 @@ jobs:
           args=(--gate "$gate")
           if [ "$(jq -r .ok "$gate")" = true ] && [ -f "$score" ]; then
             slug=$(jq -r .slug "$gate")
-            ./target/release/cb record "$slug" --stage pr --run "$score" \
+            type=$(jq -r '.type // "simple"' "$gate")
+            decl=()
+            if [ "$type" = research ]; then
+              id=$(jq -r .submission "$gate")
+              [[ "$id" =~ ^[a-z0-9][a-z0-9-]*$ ]] || { echo "::error::bad submission id in the gate result"; exit 1; }
+              [[ "$slug" =~ ^[a-z0-9][a-z0-9-]*$ ]] || { echo "::error::bad slug in the gate result"; exit 1; }
+              decl=(--declaration "artifacts/gate/submission/challenges/$slug/submissions/$id/submission.toml")
+            fi
+            ./target/release/cb record "$slug" --stage pr --run "$score" "${decl[@]}" \
               --commit "$HEAD_SHA" --by "$ACTOR" --at "$(date -u +%FT%TZ)" > entry.json
             args+=(--score "$score" --entry entry.json)
             git config user.name "cb-bot"
@@ -95,6 +108,59 @@ jobs:
           fi
           ./target/release/cb comment "${args[@]}" > body.md
           gh pr comment "$PR" --body-file body.md
+          # Research: a valid measurement lands the submission on main.
+          if [ "${type:-simple}" = research ] && [ "${pushed:-false}" = true ] \
+             && [ "$(jq -r .entry.status entry.json)" = valid ]; then
+            view=$(gh pr view "$PR" --json state,headRefOid)
+            if [ "$(jq -r .state <<<"$view")" != OPEN ] || [ "$(jq -r .headRefOid <<<"$view")" != "$HEAD_SHA" ]; then
+              echo "::notice::PR #$PR is closed or has a newer head; not landing $slug/$id"
+            else
+              git fetch -q origin "+refs/pull/$PR/head:refs/cb/land"
+              [ "$(git rev-parse refs/cb/land)" = "$HEAD_SHA" ] \
+                || { echo "::error::the PR head is not the measured commit"; exit 1; }
+              git pull -q --rebase origin main
+              set +e
+              ./target/release/cb gate --base HEAD --head "$HEAD_SHA" --out land --json land.json
+              set -e
+              cat land.json
+              [ "$(jq -r .ok land.json)" = true ] \
+                && [ "$(jq -r '.type // "simple"' land.json)" = research ] \
+                && [ "$(jq -r .slug land.json)" = "$slug" ] \
+                && [ "$(jq -r .submission land.json)" = "$id" ] \
+                || { echo "::error::the landing gate disagrees with the measured submission"; exit 1; }
+              git checkout "$HEAD_SHA" -- "challenges/$slug/submissions/$id"
+              # No [skip actions]: this push starts Accept.
+              git commit -q -F - <<MSG
+          submission: $slug/$id (PR #$PR)
+
+          Submitted-by: $ACTOR
+          PR: $PR
+          MSG
+              landed=false
+              dir="challenges/$slug/submissions/$id"
+              for i in 1 2 3 4 5; do
+                if git pull -q --rebase origin main; then
+                  # The gate ran once; a same-id submission may have landed since. Only
+                  # A entries under our own dir may differ from main, and main must not
+                  # hold the dir (else our files would merge into someone else's).
+                  bad=false
+                  [ -z "$(git ls-tree origin/main -- "$dir")" ] || bad=true
+                  while IFS=$'\t' read -r st path; do
+                    [ -n "$st" ] || continue
+                    if [ "$st" != A ] || [ "${path#"$dir"/}" = "$path" ]; then bad=true; fi
+                  done < <(git diff --name-status origin/main HEAD)
+                  $bad && { echo "::error::a submission with id $id landed on main meanwhile; not pushing"; exit 1; }
+                  if git push -q origin HEAD:main; then landed=true; break; fi
+                else
+                  git rebase --abort 2>/dev/null || true
+                fi
+                sleep $((RANDOM % 10 + 3))
+              done
+              $landed || { echo "::error::the submission was not landed on main"; exit 1; }
+              short=$(git rev-parse --short HEAD)
+              gh pr close "$PR" --comment "Landed on main as $short. The Accept workflow now measures it twice on main and records it."
+            fi
+          fi
           # The PR still gets its comment; the lost record fails the job.
           ${pushed:-true} || { echo "::error::the results commit was not pushed to main"; exit 1; }
         env:

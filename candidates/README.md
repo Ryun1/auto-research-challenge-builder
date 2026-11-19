@@ -5,7 +5,9 @@ rubric (PLAN.md §1). Edits go in via PR. These evaluations are AMBER and are
 never published to the public site.
 
 Research candidates (open, multi-axis challenges with no single score) live in
-`research/<slug>.md` instead, judged with the draft rubric in
+`research/<slug>.md` instead (a research candidate that passes R1-R5 is built
+with `cb new <slug> --type research`, see the research-challenges design spec;
+once launched, its candidate file links the challenge dir), judged with the draft rubric in
 `.claude/skills/judging-challenge-candidates/research-rubric.md`. `cb rank`
 doesn't read them.
 

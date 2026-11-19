@@ -5,10 +5,13 @@ on:
     # A PR that changes only candidate files gets no CI run: CI tests nothing of
     # a submission (Submission scores it) and every run is billed. main's ruleset
     # has no required status checks; if CI ever becomes one, drop this filter,
-    # or candidate-only PRs can never merge.
-    paths-ignore: ["challenges/*/candidate/**"]
+    # or candidate-only PRs can never merge. Research submissions
+    # (challenges/*/submissions/**) are the same: Submission measures them.
+    # Pushes to main skip them and the results file for the same reason.
+    paths-ignore: ["challenges/*/candidate/**", "challenges/*/submissions/**"]
   push:
     branches: [main]
+    paths-ignore: ["challenges/*/submissions/**", "challenges/*/results.jsonl"]
 
 permissions:
   contents: read

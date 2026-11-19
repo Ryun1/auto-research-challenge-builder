@@ -47,7 +47,7 @@ A research request stays research. If a narrow scalar slice is also attractive (
 5. Measure what you cheaply can (build, a run, peak RAM) on the local machine. Do not trigger CI runs: Actions minutes are metered.
 6. Write the file, then end with a spike checklist of what must be measured before launch.
 
-The simple path is already well documented: follow PLAN.md §1 and `candidates/README.md` exactly; `cb rank --dir candidates` totals it. For research, **REQUIRED:** read `research-rubric.md` before scoring.
+The simple path is already well documented: follow PLAN.md §1 and `candidates/README.md` exactly; `cb rank --dir candidates` totals it. For research, **REQUIRED:** read `research-rubric.md` before scoring. A research candidate that passes R1–R5 is built with `cb new <slug> --type research` (see `docs/superpowers/specs/2026-11-19-research-challenges-design.md`); once launched, its candidate file links the challenge dir.
 
 ## Common mistakes
 

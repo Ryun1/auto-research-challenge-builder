@@ -1,7 +1,8 @@
 # PR scoring (PLAN.md §4, #12). The judge always comes from main:
 # pull_request_target runs THIS file from the base branch, never the PR's copy.
 # Submission bytes are data: the gate never runs them, the score job
-# compiles them offline and runs verify/score as nobody with no network.
+# compiles them offline and runs verify/score (simple challenges) or
+# measure (research challenges, gate type "research") as nobody with no network.
 # No secrets, read-only token. The score it uploads is a claim; comment.yml
 # posts it, and only promote.yml (on main) decides the record.
 #
@@ -40,6 +41,7 @@ jobs:
       slug: ${{ steps.gate.outputs.slug }}
       runner: ${{ steps.gate.outputs.runner }}
       kit: ${{ steps.gate.outputs.kit }}
+      type: ${{ steps.gate.outputs.type }}
     steps:
       # Expressions compare strings ignoring case, so the job condition would
       # also accept a branch called Main. bash does not.
@@ -94,7 +96,7 @@ jobs:
           set +e
           ./target/release/cb gate --base "$BASE_SHA" --head "$HEAD_SHA" --out submission --json gate.json
           set -e
-          for k in ok slug runner kit; do echo "$k=$(jq -r ".$k // empty" gate.json)" >> "$GITHUB_OUTPUT"; done
+          for k in ok slug runner kit type; do echo "$k=$(jq -r ".$k // empty" gate.json)" >> "$GITHUB_OUTPUT"; done
           cat gate.json
         env:
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
@@ -134,9 +136,15 @@ jobs:
           slug: ${{ needs.gate.outputs.slug }}
       - run: cargo build --locked --release
       - name: Build, then verify + score sandboxed
-        run: ./target/release/cb score "$SLUG" --submission gate/submission --sandbox --out score.json
+        run: |
+          if [ "$TYPE" = research ]; then
+            ./target/release/cb measure "$SLUG" --submission gate/submission --sandbox --out score.json
+          else
+            ./target/release/cb score "$SLUG" --submission gate/submission --sandbox --out score.json
+          fi
         env:
           SLUG: ${{ needs.gate.outputs.slug }}
+          TYPE: ${{ needs.gate.outputs.type }}
           CB_POOL: fresh # challenges that support it score on inputs that aren't in the repo
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         if: always()

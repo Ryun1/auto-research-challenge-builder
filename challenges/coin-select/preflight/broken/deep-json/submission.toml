@@ -1,0 +1,6 @@
+id        = "deep-json"
+contract  = "wallet@1"
+novelty   = "new"
+direction = "deep-json"
+taxonomy  = { strategy = "largest-first", change = "single", consolidation = "none", language = "python" }
+summary   = "Broken on purpose: answers the first payment with a 60000-deep nested JSON array; the judge must reject it as an unparseable reply, not report infra."

@@ -1,0 +1,293 @@
+#!/usr/bin/env python3
+"""Judge for contract wallet@1 (coin-select). Trusted; stdlib only.
+
+Env (from cb): CB_SEED, CB_REPEAT, CB_CONTRACT, CB_SUBMISSION_DIR, CB_BIN,
+CB_LIMITS, CB_SANDBOX. Prints one JSON object and exits 0.
+
+Per scenario it starts `cb participant -- ./select` (one process), speaks JSON
+lines (see INTERFACE.md), validates every reply, and measures the axes from
+those same replies and from the launcher's report. The participant's own
+output is never read except as protocol replies; its environment has no
+CB_SEED.
+"""
+import hashlib
+import json
+import os
+import select
+import shutil
+import statistics
+import subprocess
+import sys
+import tempfile
+import time
+
+sys.dont_write_bytecode = True
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import sim  # noqa: E402
+
+LINE_CAP = 64 * 1024
+REPLY_TIMEOUT = 10.0
+WAIT_SECS = 15.0
+
+
+class Fail(Exception):
+    """A violation by the participant: stops the scenario."""
+
+    def __init__(self, check, detail):
+        super().__init__(detail)
+        self.check, self.detail = check, detail
+
+
+class Infra(Exception):
+    """A failure of the launcher or sandbox, not of the participant."""
+
+
+class Peer:
+    def __init__(self, cmd, cwd, env):
+        self.proc = subprocess.Popen(cmd, cwd=cwd, env=env, stdin=subprocess.PIPE,
+                                     stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
+        self.wfd = self.proc.stdin.fileno()
+        self.rfd = self.proc.stdout.fileno()
+        os.set_blocking(self.wfd, False)
+        self.buf = b""
+        self.eof = False
+
+    def send(self, obj):
+        data = (json.dumps(obj, separators=(",", ":")) + "\n").encode()
+        deadline = time.monotonic() + REPLY_TIMEOUT
+        while data:
+            left = deadline - time.monotonic()
+            if left <= 0:
+                raise Fail("valid-txs", "participant not reading input")
+            _, w, _ = select.select([], [self.wfd], [], left)
+            if not w:
+                continue
+            try:
+                n = os.write(self.wfd, data)
+            except BlockingIOError:
+                continue
+            except BrokenPipeError:
+                raise Fail("valid-txs", "participant closed its input")
+            data = data[n:]
+
+    def readline(self):
+        """Return (line bytes, monotonic time at which it completed)."""
+        deadline = time.monotonic() + REPLY_TIMEOUT
+        while True:
+            i = self.buf.find(b"\n")
+            if i >= 0:
+                line, self.buf = self.buf[:i], self.buf[i + 1:]
+                if len(line) > LINE_CAP:
+                    raise Fail("valid-txs", "reply line over 64 KiB")
+                return line, time.monotonic()
+            if len(self.buf) > LINE_CAP:
+                raise Fail("valid-txs", "reply line over 64 KiB")
+            left = deadline - time.monotonic()
+            if left <= 0:
+                raise Fail("valid-txs", "no reply in %d s" % REPLY_TIMEOUT)
+            r, _, _ = select.select([self.rfd], [], [], left)
+            if r:
+                data = os.read(self.rfd, 65536)
+                if not data:
+                    self.eof = True
+                    raise Fail("valid-txs", "participant exited")
+                self.buf += data
+
+    def kill(self):
+        """Let the participant exit on stdin EOF (2 s), then kill the launcher."""
+        try:
+            self.proc.stdin.close()
+        except OSError:
+            pass
+        try:
+            self.proc.wait(timeout=2)
+        except subprocess.TimeoutExpired:
+            try:
+                self.proc.kill()
+            except OSError:
+                pass
+        try:
+            self.proc.stdout.close()
+        except OSError:
+            pass
+        try:
+            self.proc.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            pass
+
+    def finish(self):
+        """Close stdin and wait (bounded) for the launcher to exit."""
+        try:
+            self.proc.stdin.close()
+        except OSError:
+            pass
+        try:
+            return self.proc.wait(timeout=WAIT_SECS)
+        except subprocess.TimeoutExpired:
+            self.kill()
+            return None
+
+
+def read_report(path):
+    try:
+        with open(path) as f:
+            return json.load(f)
+    except (OSError, ValueError):
+        return None
+
+
+def check_exit(rep, code):
+    """Raise Infra when the launcher itself failed (report status `infra`, or no
+    report at all with the launcher's exit code 125)."""
+    if rep is None:
+        if code == 125:
+            raise Infra("participant launcher: failed with exit 125 and no report")
+        return
+    if rep.get("status") == "infra":
+        raise Infra("participant launcher: %s" % (rep.get("reason") or "sandbox setup failed"))
+
+
+def describe_exit(rep):
+    if rep is None:
+        return "participant did not finish"
+    st = rep.get("status")
+    if st == "memory_limit":
+        return "participant hit the memory limit"
+    if st == "ok":
+        return "participant exited early"
+    if st == "timeout":
+        return "participant hit the wall-clock limit"
+    if st == "cpu_limit":
+        return "participant hit the CPU limit"
+    return "participant failed (exit %s, signal %s)" % (rep.get("exit_code"), rep.get("signal"))
+
+
+def run_scenario(k, scenario, env, sub_dir, tmp):
+    report = os.path.join(tmp, "r%d.json" % k)
+    cmd = [os.environ["CB_BIN"], "participant", "--report", report, "--", "./select"]
+    peer = Peer(cmd, sub_dir, env)
+    wallet = {}
+    stats = {"fees": 0, "inputs": 0, "txs": 0, "lat": [], "refused": 0}
+    cur = "start"
+    try:
+        try:
+            peer.send(sim.PARAMS)
+            for e in scenario:
+                if e["t"] == "deposit":
+                    cur = "deposit"
+                    peer.send({"type": "deposit", "utxos": e["utxos"]})
+                    for u in e["utxos"]:
+                        wallet[u["id"]] = u["lovelace"]
+                    continue
+                cur = e["id"]
+                t0 = time.monotonic()
+                peer.send({"type": "pay", "id": e["id"],
+                           "outputs": [{"lovelace": v} for v in e["outputs"]]})
+                line, t1 = peer.readline()
+                stats["lat"].append((t1 - t0) * 1000.0)
+                # Anything raised while decoding or checking a participant
+                # reply (RecursionError, TypeError, OverflowError, ...) is the
+                # participant's failure, never a judge bug.
+                try:
+                    reply = json.loads(line.decode("utf-8"))
+                    if isinstance(reply, dict) and reply.get("refuse") is True:
+                        ref = sim.largest_first(wallet, e["outputs"])
+                        refused = ref is None
+                        err = None
+                    else:
+                        refused = False
+                        err = sim.validate_tx(wallet, e["outputs"], reply)
+                        if not err:
+                            sim.apply_tx(wallet, e["id"], reply)
+                            fee, n_in = reply["fee"], len(reply["inputs"])
+                except Exception:
+                    raise Fail("valid-txs", "unparseable reply")
+                if isinstance(reply, dict) and reply.get("refuse") is True:
+                    if not refused:
+                        raise Fail("serves-feasible", "refused a payable payment")
+                    stats["refused"] += 1
+                    continue
+                if err:
+                    raise Fail("valid-txs", err)
+                stats["fees"] += fee
+                stats["inputs"] += n_in
+                stats["txs"] += 1
+            cur = "end"
+            peer.send({"type": "end"})
+        except Fail as f:
+            if f.check == "valid-txs" and (peer.eof or "closed its input" in f.detail):
+                try:
+                    peer.proc.wait(timeout=WAIT_SECS)
+                except subprocess.TimeoutExpired:
+                    pass
+                rep = read_report(report)
+                check_exit(rep, peer.proc.returncode)
+                f.detail = describe_exit(rep)
+            raise
+        code = peer.finish()
+        rep = read_report(report)
+        check_exit(rep, code)
+        if code is None or rep is None:
+            raise Fail("valid-txs", "participant did not finish after end")
+        if rep.get("status") != "ok" or code != 0:
+            raise Fail("valid-txs", describe_exit(rep))
+        stats["rss"] = float(rep["peak_rss_mib"])
+        stats["dust"] = sum(1 for v in wallet.values() if v < 2 * sim.ADA)
+        return stats
+    except Fail as f:
+        f.detail = "%s: %s" % (cur, f.detail)
+        raise
+    finally:
+        peer.kill()
+
+
+def main():
+    seed = int(os.environ["CB_SEED"])
+    sub_dir = os.environ["CB_SUBMISSION_DIR"]
+    scenarios = sim.gen_scenarios(seed)
+    inputs = hashlib.sha256(json.dumps(scenarios, sort_keys=True).encode()).hexdigest()
+    env = dict(os.environ)
+    env.pop("CB_SEED", None)
+    tmp = tempfile.mkdtemp()
+    out = {"ok": False, "inputs": inputs, "checks": [], "axes": {}}
+    results, failure, infra = [], None, None
+    try:
+        for k, sc in enumerate(scenarios):
+            try:
+                results.append(run_scenario(k, sc, env, sub_dir, tmp))
+            except Fail as f:
+                failure = (f.check, "scenario %d, %s" % (k, f.detail))
+                break
+            except Infra as i:
+                infra = str(i)
+                break
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+    if infra is not None:
+        return {"ok": False, "infra": True, "inputs": inputs, "checks": [], "axes": {},
+                "detail": infra}
+    for prop in ("valid-txs", "serves-feasible"):
+        bad = failure is not None and failure[0] == prop
+        out["checks"].append({"property": prop, "ok": not bad, "detail": failure[1] if bad else ""})
+    if failure is None:
+        n = len(results)
+        lat = [x for r in results for x in r["lat"]]
+        txs = sum(r["txs"] for r in results)
+        out["ok"] = True
+        out["axes"] = {
+            "fees": sum(r["fees"] for r in results) / sim.ADA / n,
+            "dust": sum(r["dust"] for r in results) / n,
+            "inputs_per_tx": sum(r["inputs"] for r in results) / txs if txs else 0.0,
+            "latency_ms": statistics.median(lat) if lat else 0.0,
+            "peak_rss_mib": max(r["rss"] for r in results),
+        }
+    return out
+
+
+if __name__ == "__main__":
+    try:
+        res = main()
+    except Exception as exc:  # a judge bug, not the participant's fault
+        res = {"ok": False, "infra": True, "inputs": "", "checks": [], "axes": {},
+               "detail": "%s: %s" % (type(exc).__name__, exc)}
+    print(json.dumps(res))

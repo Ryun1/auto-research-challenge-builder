@@ -155,6 +155,10 @@ not assumed:
 
 ## 2. Challenge spec + scaffold
 
+Two challenge types exist. This section, §3 and §4 describe the simple type;
+research challenges (`type = "research"`, `cb new <slug> --type research`) have
+no `--family` and no single score: see "Research challenges" below.
+
 `cb new <slug> --family perf|resource|math|proof` creates
 `challenges/<slug>/` with:
 
@@ -214,7 +218,9 @@ Per-family defaults:
 
 ## 3. Preflight (`cb preflight <slug>`)
 
-Mechanical checks that block launch:
+Mechanical checks that block launch. (Research challenges run their own
+preflight: contracts, taxonomy, the baseline and deliberately broken variants
+through the judge, and measured seed spread for the tolerances.)
 
 - **Baseline passes** the verifier, and a set of deliberately broken
   candidates each fail it. That set is off-by-one output, a partial
@@ -243,6 +249,10 @@ Human checklist (`THREAT_MODEL.md`, required, reviewed in PR):
 - What does a +100% outlier trigger? (manual review, never auto-promote)
 
 ## 4. Runner (GitHub Actions)
+
+(Research PRs use the same trust rule with their own gate: one new
+`submissions/<id>/` directory, judged by `cb measure` in a no-network sandbox;
+a valid PR is landed on main automatically. See "Research challenges".)
 
 Trust rule: **the judge always comes from `main`; submission bytes are data
 until the build step.**
@@ -287,6 +297,22 @@ pull/show/check/target` works unchanged. The feed's `schema_version` is owned
 here, and the toolkit pins the versions it accepts. The Site workflow
 publishes the feeds at
 `https://ryun1.github.io/auto-research-challenges/feeds/<slug>.json`.
+
+## Research challenges
+
+Open, multi-axis challenges with no single score (the first is `coin-select`,
+Cardano UTxO selection). Design:
+[docs/superpowers/specs/2026-11-19-research-challenges-design.md](docs/superpowers/specs/2026-11-19-research-challenges-design.md).
+A participant adds one immutable `submissions/<id>/` directory; one judge per
+contract runs it, checks the preserved properties and measures every axis on
+the same outputs. Decisions in brief:
+
+- Toolchains: anything that builds offline on the pinned image plus the trusted `setup.sh`; dependencies vendored.
+- Pilot: `coin-select` (CIP-2). Feed: site only at first, a documented schema-2 research feed.
+- Admission: auto-merge on pass (gate passes and the PR measurement is `valid`), then two clean runs on main record it.
+- Taxonomy edits: a separate maintainer PR; submission PRs only add a directory.
+- Scope: M0-M8 (launch the pilot); Stwo is a follow-up.
+- Attacks are covered by `scripts/malicious-prs-research.sh`.
 
 ## 6. Extraction from provably.fast
 

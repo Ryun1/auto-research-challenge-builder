@@ -299,20 +299,7 @@ fn patch(
     if text.is_empty() {
         return None;
     }
-    if text.len() <= MAX_PATCH {
-        return Some(text);
-    }
-    let mut cut = MAX_PATCH;
-    while !text.is_char_boundary(cut) {
-        cut -= 1;
-    }
-    let cut = text[..cut].rfind('\n').map_or(cut, |i| i + 1);
-    Some(format!(
-        "{}\n[diff cut at {} KiB of {} KiB]\n",
-        &text[..cut],
-        MAX_PATCH / 1024,
-        text.len() / 1024
-    ))
+    Some(cap_patch(text))
 }
 
 /// One challenge's public summary. `has_feed`: a feed was written for it.
@@ -325,6 +312,9 @@ pub fn challenge(
     patches: &mut Vec<(String, String)>,
 ) -> Result<Value, String> {
     let dir = root.join(slug);
+    if crate::challenge::challenge_type(&dir)? == "research" {
+        return research_challenge(root, candidates, slug, has_feed, patches);
+    }
     let spec = Spec::load(&dir)?;
     let results = read_results(root, slug)?;
     let maximise = spec.challenge.direction == "maximise";
@@ -420,6 +410,162 @@ pub fn challenge(
         "prompt": prompt(&dir),
         "feed": has_feed.then(|| format!("feeds/{slug}.json")),
     }))
+}
+
+/// A submission id or parent that is a single path component.
+fn safe_component(s: &str) -> bool {
+    !s.is_empty() && s != "." && s != ".." && !s.contains(['/', '\\', '\0'])
+}
+
+fn cap_patch(text: String) -> String {
+    if text.len() <= MAX_PATCH {
+        return text;
+    }
+    let mut cut = MAX_PATCH;
+    while !text.is_char_boundary(cut) {
+        cut -= 1;
+    }
+    let cut = text[..cut].rfind('\n').map_or(cut, |i| i + 1);
+    format!(
+        "{}\n[diff cut at {} KiB of {} KiB]\n",
+        &text[..cut],
+        MAX_PATCH / 1024,
+        text.len() / 1024
+    )
+}
+
+/// The change from one submission directory to another, as a patch. Paths are
+/// relative to the repo so the patch names no local directory.
+fn submission_patch(root: &Path, slug: &str, parent: &str, id: &str) -> Option<String> {
+    if !safe_component(parent) || !safe_component(id) {
+        return None;
+    }
+    let repo = root.parent().unwrap_or(root);
+    let base = root.strip_prefix(repo).ok()?;
+    // A relative root has an empty parent: that is the current directory.
+    let repo = if repo.as_os_str().is_empty() {
+        Path::new(".")
+    } else {
+        repo
+    };
+    let sub = |n: &str| base.join(slug).join("submissions").join(n);
+    let out = std::process::Command::new("git")
+        .current_dir(repo)
+        .args([
+            "diff",
+            "--no-index",
+            "--no-color",
+            "--no-ext-diff",
+            "--no-textconv",
+            "--",
+        ])
+        .arg(sub(parent))
+        .arg(sub(id))
+        .stderr(std::process::Stdio::null())
+        .output()
+        .ok()?;
+    // Exit code 1 means the trees differ.
+    if !matches!(out.status.code(), Some(0 | 1)) {
+        return None;
+    }
+    let text = String::from_utf8_lossy(&out.stdout).into_owned();
+    (!text.is_empty()).then(|| cap_patch(text))
+}
+
+/// Sorted file paths under `dir`, relative to it, at most 200.
+fn file_listing(dir: &Path) -> Vec<String> {
+    fn walk(base: &Path, dir: &Path, out: &mut Vec<String>) {
+        let Ok(rd) = std::fs::read_dir(dir) else {
+            return;
+        };
+        for e in rd.flatten() {
+            let p = e.path();
+            let Ok(ft) = e.file_type() else { continue };
+            if ft.is_dir() {
+                walk(base, &p, out);
+            } else if ft.is_file() {
+                if let Ok(r) = p.strip_prefix(base) {
+                    out.push(r.to_string_lossy().into_owned());
+                }
+            }
+        }
+    }
+    let mut out = Vec::new();
+    walk(dir, dir, &mut out);
+    out.sort();
+    out.truncate(200);
+    out
+}
+
+/// A research challenge's entry: its schema-2 feed, plus the page's own fields
+/// and, per accepted submission, its diff against the parent (builds-on) or its
+/// files and README excerpt (new).
+fn research_challenge(
+    root: &Path,
+    candidates: &Path,
+    slug: &str,
+    has_feed: bool,
+    patches: &mut Vec<(String, String)>,
+) -> Result<Value, String> {
+    let dir = root.join(slug);
+    let f = crate::research::feed::feed(root, slug, &format!("feeds/{slug}.json"), "")?;
+    let mut entry = f.as_object().cloned().unwrap_or_default();
+    for k in ["generated_at", "url", "feed_schema_version"] {
+        entry.remove(k);
+    }
+    let status = str_of(&entry["status"]).to_string();
+    let has_baseline = entry["submissions"]
+        .as_array()
+        .is_some_and(|s| s.iter().any(|r| r["baseline"] == true));
+    let state = match (status.as_str(), has_baseline) {
+        ("open", false) => "pending",
+        ("open", true) => "open",
+        ("closed", _) => "closed",
+        _ => "draft",
+    };
+    let (readme_title, summary) = readme(&dir, slug);
+    let title = candidate_title(candidates, slug).or(readme_title);
+    let subs = entry["submissions"].as_array().cloned().unwrap_or_default();
+    let subs: Vec<Value> = subs
+        .into_iter()
+        .map(|mut s| {
+            let id = str_of(&s["id"]).to_string();
+            let parent = str_of(&s["parent"]).to_string();
+            if s["novelty"] == "builds-on" {
+                let diff = submission_patch(root, slug, &parent, &id).map(|text| {
+                    let path = format!("diffs/{slug}/{id}.patch");
+                    patches.push((path.clone(), text));
+                    path
+                });
+                s["diff"] = json!(diff);
+            } else if safe_component(&id) {
+                let sd = dir.join("submissions").join(&id);
+                s["files"] = json!(file_listing(&sd));
+                let text = std::fs::read_to_string(sd.join("README.md")).unwrap_or_default();
+                let excerpt: Vec<String> = paragraphs(&text)
+                    .iter()
+                    .filter(|p| !p.starts_with(['#', '|', '`', '<']))
+                    .map(|p| plain(p))
+                    .take(3)
+                    .collect();
+                s["readme"] = json!(clip(&excerpt.join("\n\n"), MAX_SUMMARY));
+            }
+            s
+        })
+        .collect();
+    entry.insert("submissions".into(), Value::Array(subs));
+    entry.insert("slug".into(), json!(slug));
+    entry.insert("title".into(), json!(title));
+    entry.insert("summary".into(), json!(summary));
+    entry.insert("state".into(), json!(state));
+    entry.insert("type".into(), json!("research"));
+    entry.insert("submit_steps".into(), json!(submit_steps(&dir)));
+    entry.insert("prompt".into(), json!(prompt(&dir)));
+    entry.insert(
+        "feed".into(),
+        json!(has_feed.then(|| format!("feeds/{slug}.json"))),
+    );
+    Ok(Value::Object(entry))
 }
 
 /// Every challenge directory (one with a `challenge.toml`), sorted.
@@ -691,5 +837,118 @@ mod tests {
         assert_eq!(patch(&repo, "toy", &ed, "baseline", &promoted), None);
         assert_eq!(patch(&repo, "toy", &ed, "pr", "HEAD"), None);
         assert_eq!(patch(&repo, "toy", &ed, "pr", &"0".repeat(40)), None);
+    }
+
+    /// A research challenge under `<scratch>/challenges/t` with accepted rows:
+    /// baseline, `a` (new) and `b` (builds on a, answer changed).
+    fn research_fixture(name: &str) -> std::path::PathBuf {
+        let repo = crate::paths::scratch(name);
+        let root = repo.join("challenges");
+        std::fs::create_dir_all(&root).unwrap();
+        let dir = crate::research::testkit::toy(&root, "t", crate::research::testkit::GOOD_JUDGE);
+        let subs = dir.join("submissions");
+        for id in ["a", "b"] {
+            std::fs::create_dir_all(subs.join(id)).unwrap();
+            for f in ["answer", "build.sh"] {
+                std::fs::copy(subs.join("baseline").join(f), subs.join(id).join(f)).unwrap();
+            }
+        }
+        std::fs::write(subs.join("a/README.md"), "# a\n\nA **new** approach.\n").unwrap();
+        std::fs::write(subs.join("b/answer"), "43\n").unwrap();
+        let row = |stage: &str,
+                   id: &str,
+                   at: &str,
+                   novelty: &str,
+                   dir: &str,
+                   parent: Option<&str>| {
+            json!({"schema": 2, "type": "research", "at": at, "stage": stage, "status": "accepted",
+                   "slug": "t", "submission": id, "commit": "abc", "by": "x", "model": "m",
+                   "contract": "main@1", "novelty": novelty, "direction": dir, "parent": parent,
+                   "taxonomy": {"approach": "baseline"}, "proposed": [], "summary": "s",
+                   "claims": [],
+                   "axes": {"time_ms": {"median": 1.5, "min": 1.0, "max": 2.0, "n": 3},
+                            "size_bytes": {"median": 42.0, "min": 42.0, "max": 42.0, "n": 3}},
+                   "checks": []})
+        };
+        let rows = [
+            row(
+                "baseline",
+                "baseline",
+                "2026-01-01T00:00:00Z",
+                "new",
+                "baseline",
+                None,
+            ),
+            row("accept", "a", "2026-01-02T00:00:00Z", "new", "alpha", None),
+            row(
+                "accept",
+                "b",
+                "2026-01-03T00:00:00Z",
+                "builds-on",
+                "alpha",
+                Some("a"),
+            ),
+        ];
+        let body: String = rows.iter().map(|r| format!("{r}\n")).collect();
+        std::fs::write(dir.join("results.jsonl"), body).unwrap();
+        root
+    }
+
+    #[test]
+    fn research_entry_has_map_data() {
+        let root = research_fixture("pages-research");
+        let mut patches = Vec::new();
+        let c = challenge(&root, &root.join("none"), "t", true, &mut patches).unwrap();
+        assert_eq!(c["type"], "research");
+        assert_eq!(c["state"], "open");
+        assert_eq!(c["feed"], "feeds/t.json");
+        assert!(c["axes"].as_array().unwrap().len() >= 2);
+        assert_eq!(c["directions"].as_array().unwrap().len(), 2);
+        let subs = c["submissions"].as_array().unwrap();
+        assert_eq!(subs.len(), 3);
+        assert_eq!(subs[0]["axes"]["time_ms"]["median"], 1.5);
+        assert_eq!(c["attempts"]["accepted"], 3);
+    }
+
+    #[test]
+    fn builds_on_gets_diff_against_parent() {
+        let root = research_fixture("pages-research-diff");
+        let mut patches = Vec::new();
+        let c = challenge(&root, &root.join("none"), "t", true, &mut patches).unwrap();
+        let b = c["submissions"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|s| s["id"] == "b")
+            .unwrap();
+        assert_eq!(b["diff"], "diffs/t/b.patch");
+        assert_eq!(patches.len(), 1);
+        let (path, text) = &patches[0];
+        assert_eq!(path, "diffs/t/b.patch");
+        assert!(text.contains("-42\n+43\n"), "{text}");
+        assert!(
+            !text.contains("baseline") && !text.contains("build.sh"),
+            "{text}"
+        );
+        assert!(
+            !text.contains(&root.to_string_lossy().to_string()),
+            "{text}"
+        );
+    }
+
+    #[test]
+    fn new_submission_gets_files_not_diff() {
+        let root = research_fixture("pages-research-new");
+        let mut patches = Vec::new();
+        let c = challenge(&root, &root.join("none"), "t", true, &mut patches).unwrap();
+        let a = c["submissions"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|s| s["id"] == "a")
+            .unwrap();
+        assert!(a.get("diff").is_none());
+        assert_eq!(a["files"], json!(["README.md", "answer", "build.sh"]));
+        assert_eq!(a["readme"], "A new approach.");
     }
 }

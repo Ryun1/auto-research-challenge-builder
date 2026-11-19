@@ -1,0 +1,63 @@
+#!/usr/bin/env python3
+"""Baseline for coin-select: CIP-2 largest-first with a single change output."""
+import json
+import sys
+
+
+def main():
+    p = None
+    wallet = {}
+    for line in sys.stdin:
+        msg = json.loads(line)
+        t = msg["type"]
+        if t == "params":
+            p = msg
+        elif t == "deposit":
+            for u in msg["utxos"]:
+                wallet[u["id"]] = u["lovelace"]
+        elif t == "pay":
+            reply = select(p, wallet, [o["lovelace"] for o in msg["outputs"]])
+            if reply is None:
+                out = {"refuse": True}
+            else:
+                for i in reply["inputs"]:
+                    del wallet[i]
+                for k, c in enumerate(reply["change"]):
+                    wallet["%s#%d" % (msg["id"], k)] = c
+                out = reply
+            if "fee" in out:
+                # BROKEN: one lovelace under the minimum, kept balanced via the change
+                out = dict(out, fee=out["fee"] - 1,
+                           change=[c + (i == 0) for i, c in enumerate(out["change"])])
+            sys.stdout.write(json.dumps(out) + "\n")
+            sys.stdout.flush()
+        elif t == "end":
+            return
+
+
+def select(p, wallet, outs):
+    sz = p["size"]
+
+    def fee(n_in, n_out):
+        size = sz["base"] + sz["input"] * n_in + sz["output"] * n_out
+        return p["min_fee_a"] * size + p["min_fee_b"], size
+
+    min_ada = (160 + sz["output"]) * p["coins_per_utxo_byte"]
+    need = sum(outs)
+    total, picked = 0, []
+    for uid in sorted(wallet, key=lambda i: (-wallet[i], i)):
+        picked.append(uid)
+        total += wallet[uid]
+        n = len(picked)
+        fee_c, size = fee(n, len(outs) + 1)
+        if size > p["max_tx_size"]:
+            return None
+        spare = total - need
+        if spare - fee_c >= min_ada:
+            return {"inputs": picked, "change": [spare - fee_c], "fee": fee_c}
+        if spare >= fee(n, len(outs))[0]:
+            return {"inputs": picked, "change": [], "fee": spare}
+    return None
+
+
+main()

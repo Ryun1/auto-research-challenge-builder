@@ -32,6 +32,9 @@ pub struct Spec {
 #[serde(deny_unknown_fields)]
 pub struct Meta {
     pub slug: String,
+    /// `"simple"` (the default) or `"research"`; research has its own schema.
+    #[serde(rename = "type", default)]
+    pub kind: Option<String>,
     pub family: String,
     pub direction: String,
     pub status: String,
@@ -140,6 +143,12 @@ impl Spec {
 
     pub fn load(dir: &Path) -> Result<Spec, String> {
         let path = dir.join("challenge.toml");
+        if challenge_type(dir)? == "research" {
+            return Err(format!(
+                "{}: a research challenge (type = \"research\"): this command is for simple challenges",
+                path.display()
+            ));
+        }
         let text =
             std::fs::read_to_string(&path).map_err(|e| format!("{}: {e}", path.display()))?;
         let spec = Spec::parse(&text).map_err(|e| format!("{}: {e}", path.display()))?;
@@ -156,6 +165,13 @@ impl Spec {
 
     fn validate(&self) -> Result<(), String> {
         let c = &self.challenge;
+        if let Some(t) = &c.kind {
+            if t != "simple" {
+                return Err(format!(
+                    "type {t:?}: a simple challenge has type \"simple\""
+                ));
+            }
+        }
         if !is_slug(&c.slug) {
             return Err(format!("slug {:?}: use lowercase a-z, 0-9 and -", c.slug));
         }
@@ -246,6 +262,23 @@ impl Spec {
             }
         }
         Ok(())
+    }
+}
+
+/// Reads only `[challenge].type` (default `"simple"`).
+pub fn challenge_type(dir: &Path) -> Result<String, String> {
+    let path = dir.join("challenge.toml");
+    let text = std::fs::read_to_string(&path).map_err(|e| format!("{}: {e}", path.display()))?;
+    let table: toml::Table = text
+        .parse()
+        .map_err(|e: toml::de::Error| format!("{}: {e}", path.display()))?;
+    match table.get("challenge").and_then(|c| c.get("type")) {
+        None => Ok("simple".into()),
+        Some(toml::Value::String(s)) => Ok(s.clone()),
+        Some(_) => Err(format!(
+            "{}: challenge.type must be a string",
+            path.display()
+        )),
     }
 }
 
@@ -497,6 +530,28 @@ mod tests {
             Spec::load(&kit).unwrap().challenge.kit.as_deref(),
             Some("rust")
         );
+    }
+
+    #[test]
+    fn simple_spec_unchanged() {
+        let good = spec_toml("x", "perf", None);
+        assert!(Spec::parse(&good).is_ok());
+        let typed = good.replacen("[challenge]\n", "[challenge]\ntype = \"simple\"\n", 1);
+        assert!(Spec::parse(&typed).is_ok());
+    }
+
+    #[test]
+    fn research_type_is_not_a_simple_spec() {
+        let good = spec_toml("x", "perf", None);
+        let typed = good.replacen("[challenge]\n", "[challenge]\ntype = \"research\"\n", 1);
+        assert!(Spec::parse(&typed).is_err());
+        let root = tmp("rtype");
+        let dir = root.join("x");
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("challenge.toml"), &typed).unwrap();
+        assert_eq!(challenge_type(&dir).unwrap(), "research");
+        let e = Spec::load(&dir).unwrap_err();
+        assert!(e.contains("this command is for simple challenges"), "{e}");
     }
 
     #[test]

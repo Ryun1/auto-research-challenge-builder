@@ -23,6 +23,9 @@ fn str_of(v: &Value) -> &str {
 
 /// The feed for one challenge. `url` is where this feed is published.
 pub fn feed(root: &Path, slug: &str, url: &str, generated_at: &str) -> Result<Value, String> {
+    if crate::challenge::challenge_type(&root.join(slug))? == "research" {
+        return crate::research::feed::feed(root, slug, url, generated_at);
+    }
     let spec = Spec::load(&root.join(slug))?;
     let results = read_results(root, slug)?;
     let maximise = spec.challenge.direction == "maximise";

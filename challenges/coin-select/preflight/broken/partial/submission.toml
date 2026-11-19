@@ -1,0 +1,6 @@
+id        = "partial"
+contract  = "wallet@1"
+novelty   = "new"
+direction = "partial"
+taxonomy  = { strategy = "largest-first", change = "single", consolidation = "none", language = "python" }
+summary   = "Broken on purpose: pays only the first output of a multi-output payment."

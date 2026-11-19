@@ -1,0 +1,6 @@
+id        = "off-by-one"
+contract  = "wallet@1"
+novelty   = "new"
+direction = "off-by-one"
+taxonomy  = { strategy = "largest-first", change = "single", consolidation = "none", language = "python" }
+summary   = "Broken on purpose: largest-first that pays one lovelace less than the minimum fee."

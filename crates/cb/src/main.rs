@@ -11,6 +11,7 @@ mod paths;
 mod pipeline;
 mod policy;
 mod preflight;
+mod research;
 mod rubric;
 mod rustpolicy;
 mod site;
@@ -32,6 +33,12 @@ enum Family {
 }
 
 #[derive(Clone, Copy, ValueEnum)]
+enum ChallengeType {
+    Simple,
+    Research,
+}
+
+#[derive(Clone, Copy, ValueEnum)]
 enum Kit {
     Rust,
 }
@@ -41,8 +48,12 @@ enum Command {
     /// Scaffold challenges/<slug>/
     New {
         slug: String,
+        /// simple (one objective, a record) or research (an open space, a map)
+        #[arg(long = "type", value_enum, default_value = "simple")]
+        kind: ChallengeType,
+        /// Required for simple challenges
         #[arg(long)]
-        family: Family,
+        family: Option<Family>,
         #[arg(long)]
         kit: Option<Kit>,
         #[arg(long, default_value = "challenges")]
@@ -121,9 +132,12 @@ enum Command {
         slug: String,
         #[arg(long, default_value = "challenges")]
         root: PathBuf,
-        /// baseline | promotion | pr
+        /// simple: baseline | promotion | pr; research: pr | accept | baseline
         #[arg(long)]
         stage: String,
+        /// Research only: the submission.toml (default: from the challenge dir)
+        #[arg(long)]
+        declaration: Option<PathBuf>,
         /// Score claims: two for baseline/promotion, one for pr
         #[arg(long = "run", required = true)]
         runs: Vec<PathBuf>,
@@ -159,6 +173,30 @@ enum Command {
         #[arg(long)]
         at: String,
     },
+    /// Run a participant command under limits (CB_LIMITS, CB_SANDBOX) and measure it
+    Participant {
+        /// Write the measurement report (JSON) here
+        #[arg(long)]
+        report: Option<PathBuf>,
+        #[arg(last = true, required = true)]
+        cmd: Vec<String>,
+    },
+    /// Build and judge a research submission, writing measure.json
+    Measure {
+        slug: String,
+        #[arg(long, default_value = "challenges")]
+        root: PathBuf,
+        /// A gate export dir (cb gate --out)
+        #[arg(long, conflicts_with = "id")]
+        submission: Option<PathBuf>,
+        /// A submission already in the challenge
+        #[arg(long)]
+        id: Option<String>,
+        #[arg(long)]
+        sandbox: bool,
+        #[arg(long, default_value = "measure.json")]
+        out: PathBuf,
+    },
     /// Score candidates against the rubric
     Rank {
         #[arg(long, default_value = "candidates")]
@@ -173,23 +211,82 @@ fn main() -> ExitCode {
             url,
             out,
         } => import(&benchmark_json, &url, &out),
+        Command::Participant { report, cmd } => {
+            let sandbox = std::env::var("CB_SANDBOX").is_ok_and(|v| v == "1");
+            let limits = research::participant::limits_from_env();
+            match research::participant::run(&cmd, &limits, sandbox) {
+                Ok(r) => {
+                    if let Some(p) = report {
+                        let text = serde_json::to_string_pretty(&r).unwrap();
+                        if let Err(e) = std::fs::write(&p, text + "\n") {
+                            eprintln!("cb: write {}: {e}", p.display());
+                            std::process::exit(125);
+                        }
+                    }
+                    std::process::exit(research::participant::exit_code(&r));
+                }
+                Err(e) => {
+                    eprintln!("cb: {e}");
+                    // Tell the judge this was the infrastructure, not the submission.
+                    if let Some(p) = report {
+                        let r = research::participant::Report::infra(e, 0.0);
+                        let text = serde_json::to_string_pretty(&r).unwrap();
+                        let _ = std::fs::write(&p, text + "\n");
+                    }
+                    std::process::exit(125);
+                }
+            }
+        }
+        Command::Measure {
+            slug,
+            root,
+            submission,
+            id,
+            sandbox,
+            out,
+        } => {
+            let source = match (&submission, &id) {
+                (Some(d), _) => Ok(research::measure::Source::Export(d)),
+                (None, Some(i)) => Ok(research::measure::Source::Id(i)),
+                (None, None) => Err("give --submission or --id".to_string()),
+            };
+            source
+                .and_then(|s| research::measure::measure(&root, &slug, s, sandbox, None))
+                .and_then(|v| {
+                    let text = serde_json::to_string_pretty(&v).unwrap();
+                    println!("{text}");
+                    std::fs::write(&out, text + "\n").map_err(|e| e.to_string())
+                })
+        }
         Command::Rank { dir } => candidate::rank(&dir).map(|table| print!("{table}")),
         Command::New {
             slug,
+            kind,
             family,
             kit,
             root,
-        } => {
-            let family = family.to_possible_value().unwrap();
-            let kit = kit.map(|k| k.to_possible_value().unwrap());
-            challenge::scaffold(
-                &root,
-                &slug,
-                family.get_name(),
-                kit.as_ref().map(|k| k.get_name()),
-            )
-            .map(|dir| println!("created {}", dir.display()))
+        } => match (kind, family) {
+            (ChallengeType::Research, None) if kit.is_none() => {
+                research::scaffold::scaffold(&root, &slug)
+            }
+            (ChallengeType::Research, _) => {
+                Err("--family and --kit are for simple challenges".into())
+            }
+            (ChallengeType::Simple, None) => {
+                Err("--family is required for simple challenges".into())
+            }
+            (ChallengeType::Simple, Some(family)) => {
+                let family = family.to_possible_value().unwrap();
+                let kit = kit.map(|k| k.to_possible_value().unwrap());
+                challenge::scaffold(
+                    &root,
+                    &slug,
+                    family.get_name(),
+                    kit.as_ref().map(|k| k.get_name()),
+                )
+            }
         }
+        .map(|dir| println!("created {}", dir.display())),
         Command::Preflight { slug, root, out } => run_preflight(&root.join(&slug), &out),
         Command::Site { dir, out } => {
             site::build(&dir, &out).map(|p| println!("wrote {} (internal only)", p.display()))
@@ -271,12 +368,36 @@ fn main() -> ExitCode {
             slug,
             root,
             stage,
+            declaration,
             runs,
             commit,
             by,
             model,
             at,
         } => {
+            let research = match challenge::challenge_type(&root.join(&slug)) {
+                Ok(t) => t == "research",
+                Err(e) => return fail(&e),
+            };
+            if research {
+                if !matches!(stage.as_str(), "pr" | "accept" | "baseline") {
+                    return fail("stage: pr, accept or baseline");
+                }
+                let a = pipeline::Attempt {
+                    stage: &stage,
+                    commit: &commit,
+                    by: &by,
+                    model: &model,
+                    at: &at,
+                };
+                return match record_research(&root, &slug, declaration.as_deref(), &runs, &a) {
+                    Ok(()) => ExitCode::SUCCESS,
+                    Err(e) => fail(&e),
+                };
+            }
+            if declaration.is_some() {
+                return fail("--declaration is for research challenges");
+            }
             if !matches!(stage.as_str(), "baseline" | "promotion" | "pr") {
                 return fail("stage: baseline, promotion or pr");
             }
@@ -325,6 +446,40 @@ fn main() -> ExitCode {
             ExitCode::FAILURE
         }
     }
+}
+
+fn record_research(
+    root: &std::path::Path,
+    slug: &str,
+    declaration: Option<&std::path::Path>,
+    runs: &[PathBuf],
+    a: &pipeline::Attempt,
+) -> Result<(), String> {
+    let runs = runs
+        .iter()
+        .map(|p| pipeline::read_claim(p))
+        .collect::<Result<Vec<_>, _>>()?;
+    let path = match declaration {
+        Some(p) => p.to_path_buf(),
+        None => {
+            let id = runs[0]["submission"].as_str().unwrap_or("");
+            if !challenge::is_slug(id) {
+                return Err(format!("run submission {id:?} is not a slug"));
+            }
+            root.join(slug)
+                .join("submissions")
+                .join(id)
+                .join("submission.toml")
+        }
+    };
+    let text = std::fs::read_to_string(&path).map_err(|e| format!("{}: {e}", path.display()))?;
+    let decl = research::spec::Declaration::parse(&text)?;
+    let entry = research::record::record(root, slug, &decl, &runs, a)?;
+    println!(
+        "{}",
+        serde_json::json!({"entry": entry, "submission": decl.id})
+    );
+    Ok(())
 }
 
 fn fail(msg: &str) -> ExitCode {

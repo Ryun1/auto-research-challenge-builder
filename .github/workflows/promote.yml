@@ -7,7 +7,8 @@ name: Promote
 on:
   push:
     branches: [main]
-    paths: ["challenges/**"]
+    # Research submissions are Accept's (landed by Comment): no run needed here.
+    paths: ["challenges/**", "!challenges/*/submissions/**"]
   workflow_dispatch:
     inputs:
       slug:
@@ -48,6 +49,9 @@ jobs:
       - id: d
         run: |
           if [ "$EVENT" = workflow_dispatch ]; then
+            if grep -Eq '^type *= *"research"' "challenges/$SLUG_IN/challenge.toml"; then
+              echo "::error::research challenges are recorded by the Accept workflow"; exit 1
+            fi
             slug="$SLUG_IN"; stage=$([ "$BASELINE_IN" = true ] && echo baseline || echo promotion)
             runner=$(sed -n 's/^runner *= *"\([^"]*\)".*/\1/p' "challenges/$slug/challenge.toml")
             kit=$(sed -n 's/^kit *= *"\([^"]*\)".*/\1/p' "challenges/$slug/challenge.toml")
@@ -59,6 +63,9 @@ jobs:
             set -e
             cat gate.json
             [ "$(jq -r .ok gate.json)" = true ] || { echo "not a submission; nothing to promote"; exit 0; }
+            if [ "$(jq -r '.type // "simple"' gate.json)" = research ]; then
+              echo "research submission: the Accept workflow records it"; exit 0
+            fi
             slug=$(jq -r .slug gate.json); runner=$(jq -r .runner gate.json); kit=$(jq -r '.kit // empty' gate.json); stage=promotion
           fi
           for k in slug runner kit stage; do echo "$k=${!k}" >> "$GITHUB_OUTPUT"; done

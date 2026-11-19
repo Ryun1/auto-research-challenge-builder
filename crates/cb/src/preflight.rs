@@ -51,7 +51,7 @@ impl Report {
         self.checks.iter().any(|c| c.status == Status::Fail)
     }
 
-    fn push(&mut self, name: &str, status: Status, detail: impl Into<String>) {
+    pub(crate) fn push(&mut self, name: &str, status: Status, detail: impl Into<String>) {
         self.checks.push(Check {
             name: name.into(),
             status,
@@ -209,7 +209,7 @@ pub(crate) fn build_sandbox_available() -> bool {
 }
 
 /// Single-quotes a string for bash.
-fn sq(s: &str) -> String {
+pub(crate) fn sq(s: &str) -> String {
     format!("'{}'", s.replace('\'', "'\\''"))
 }
 
@@ -272,7 +272,7 @@ pub(crate) fn build_script(
 }
 
 /// True if CI credentials or secrets: never handed to challenge commands.
-fn secret_var(k: &str) -> bool {
+pub(crate) fn secret_var(k: &str) -> bool {
     k.starts_with("ACTIONS_")
         || k.contains("TOKEN")
         || k.starts_with("GITHUB_")
@@ -285,6 +285,17 @@ pub(crate) fn run_mode(
     dir: &Path,
     cmd: &str,
     seed: u64,
+) -> Run {
+    run_mode_timeout(mode, env, dir, cmd, seed, TIMEOUT)
+}
+
+pub(crate) fn run_mode_timeout(
+    mode: Mode,
+    env: &[(String, String)],
+    dir: &Path,
+    cmd: &str,
+    seed: u64,
+    timeout: Duration,
 ) -> Run {
     let start = Instant::now();
     let seed_env = ("CB_SEED".to_string(), seed.to_string());
@@ -414,7 +425,7 @@ pub(crate) fn run_mode(
     let status = loop {
         match child.try_wait() {
             Ok(Some(status)) => break status,
-            Ok(None) if start.elapsed() > TIMEOUT => {
+            Ok(None) if start.elapsed() > timeout => {
                 let _ = child.kill();
                 let _ = child.wait();
                 // Not joined: a surviving grandchild may hold the pipes open.
@@ -477,7 +488,7 @@ pub(crate) fn metrics(r: &Run) -> Option<Value> {
     v.get("metrics").filter(|m| m.is_object()).cloned()
 }
 
-fn max_child_rss_gb() -> f64 {
+pub(crate) fn max_child_rss_gb() -> f64 {
     // SAFETY: getrusage writes into the zeroed struct we pass.
     let mut u: libc::rusage = unsafe { std::mem::zeroed() };
     unsafe { libc::getrusage(libc::RUSAGE_CHILDREN, &mut u) };
@@ -572,7 +583,7 @@ fn fact(ok: bool, secs: f64) -> Fact {
 
 /// Unanswered template lines: a `- question:` bullet with nothing after it,
 /// or a `## section` with no text before the next heading.
-fn threat_model_gaps(text: &str) -> Vec<String> {
+pub(crate) fn threat_model_gaps(text: &str) -> Vec<String> {
     let mut gaps = Vec::new();
     let mut section: Option<(&str, bool)> = None;
     for line in text.lines().chain(std::iter::once("## end")) {
@@ -594,6 +605,9 @@ fn threat_model_gaps(text: &str) -> Vec<String> {
 }
 
 pub fn run_all(dir: &Path) -> Result<Report, String> {
+    if crate::challenge::challenge_type(dir)? == "research" {
+        return crate::research::preflight::run_all(dir);
+    }
     let spec = Spec::load(dir)?;
     let seed = seed();
     // [perf] settings reach the harness as env (the Rust kit reads these).
