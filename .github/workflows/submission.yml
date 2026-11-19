@@ -97,6 +97,9 @@ jobs:
           ./target/release/cb gate --base "$BASE_SHA" --head "$HEAD_SHA" --out submission --json gate.json
           set -e
           for k in ok slug runner kit type; do echo "$k=$(jq -r ".$k // empty" gate.json)" >> "$GITHUB_OUTPUT"; done
+          # Artifacts drop file modes; a research submission's build.sh needs its
+          # exec bit, so the export also travels as a tarball (modes kept).
+          [ ! -d submission ] || tar -cf submission.tar submission
           cat gate.json
         env:
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
@@ -107,6 +110,7 @@ jobs:
           path: |
             gate.json
             submission/
+            submission.tar
           if-no-files-found: error
 
   score:
@@ -138,7 +142,9 @@ jobs:
       - name: Build, then verify + score sandboxed
         run: |
           if [ "$TYPE" = research ]; then
-            ./target/release/cb measure "$SLUG" --submission gate/submission --sandbox --out score.json
+            # From the tarball: the artifact's submission/ lost its exec bits.
+            mkdir export && tar -xf gate/submission.tar --no-same-owner -C export
+            ./target/release/cb measure "$SLUG" --submission export/submission --sandbox --out score.json
           else
             ./target/release/cb score "$SLUG" --submission gate/submission --sandbox --out score.json
           fi
