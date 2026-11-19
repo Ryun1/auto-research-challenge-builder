@@ -1,0 +1,8 @@
+id        = "random-improve-consolidate"
+contract  = "wallet@1"
+novelty   = "builds-on"
+direction = ""
+parent    = "random-improve"
+taxonomy  = { strategy = "random-improve", change = "payment-shaped", consolidation = "opportunistic", language = "rust" }
+summary   = "random-improve plus opportunistic consolidation: also spends up to 3 of the smallest UTxOs under 2 ADA when the extra fee is below their value, to reduce dust."
+model     = "claude-sonnet-5-5"
