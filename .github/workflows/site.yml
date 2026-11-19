@@ -8,11 +8,11 @@ name: Site
 on:
   push:
     branches: [main]
-  # The results commits from Comment and Promote carry [skip actions], so they
+  # The results commits from Comment, Promote and Accept carry [skip actions], so they
   # do not fire push triggers. Completions only: every run is billed minutes.
   # Not Submission: Comment follows every Submission run and fires this.
   workflow_run:
-    workflows: [Comment, Promote, Preflight, Warm]
+    workflows: [Comment, Promote, Accept, Preflight, Warm]
     types: [completed]
   schedule:
     - cron: "41 5 * * *" # backstop; minutes are billed, so no tight polling
