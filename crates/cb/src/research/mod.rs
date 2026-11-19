@@ -1,5 +1,8 @@
 pub mod gate;
+pub mod measure;
 pub mod participant;
 pub mod results;
 pub mod scaffold;
 pub mod spec;
+#[cfg(test)]
+pub mod testkit;

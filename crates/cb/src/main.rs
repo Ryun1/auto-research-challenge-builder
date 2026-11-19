@@ -178,6 +178,22 @@ enum Command {
         #[arg(last = true, required = true)]
         cmd: Vec<String>,
     },
+    /// Build and judge a research submission, writing measure.json
+    Measure {
+        slug: String,
+        #[arg(long, default_value = "challenges")]
+        root: PathBuf,
+        /// A gate export dir (cb gate --out)
+        #[arg(long, conflicts_with = "id")]
+        submission: Option<PathBuf>,
+        /// A submission already in the challenge
+        #[arg(long)]
+        id: Option<String>,
+        #[arg(long)]
+        sandbox: bool,
+        #[arg(long, default_value = "measure.json")]
+        out: PathBuf,
+    },
     /// Score candidates against the rubric
     Rank {
         #[arg(long, default_value = "candidates")]
@@ -211,6 +227,27 @@ fn main() -> ExitCode {
                     std::process::exit(125);
                 }
             }
+        }
+        Command::Measure {
+            slug,
+            root,
+            submission,
+            id,
+            sandbox,
+            out,
+        } => {
+            let source = match (&submission, &id) {
+                (Some(d), _) => Ok(research::measure::Source::Export(d)),
+                (None, Some(i)) => Ok(research::measure::Source::Id(i)),
+                (None, None) => Err("give --submission or --id".to_string()),
+            };
+            source
+                .and_then(|s| research::measure::measure(&root, &slug, s, sandbox, None))
+                .and_then(|v| {
+                    let text = serde_json::to_string_pretty(&v).unwrap();
+                    println!("{text}");
+                    std::fs::write(&out, text + "\n").map_err(|e| e.to_string())
+                })
         }
         Command::Rank { dir } => candidate::rank(&dir).map(|table| print!("{table}")),
         Command::New {
