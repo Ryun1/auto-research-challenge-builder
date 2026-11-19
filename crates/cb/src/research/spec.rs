@@ -111,6 +111,9 @@ pub struct Axis {
     pub repeats: u32,
     #[serde(default)]
     pub tolerance: f64,
+    /// Absolute floor, in the axis unit, for axes whose values sit near zero.
+    #[serde(default)]
+    pub tolerance_abs: f64,
     #[serde(default)]
     pub contracts: Vec<String>,
 }
@@ -310,6 +313,12 @@ impl ResearchSpec {
             if !(0.0..1.0).contains(&a.tolerance) {
                 return Err(format!(
                     "axis {:?}: tolerance must satisfy 0 <= t < 1",
+                    a.id
+                ));
+            }
+            if !a.tolerance_abs.is_finite() || a.tolerance_abs < 0.0 {
+                return Err(format!(
+                    "axis {:?}: tolerance_abs must be finite and >= 0",
                     a.id
                 ));
             }
@@ -677,6 +686,7 @@ claims = [ { property = "change-privacy", argument = "because" } ]
         bad("ubuntu-24.04", "ubuntu-latest");
         bad("repeats   = 1", "repeats   = 0");
         bad("tolerance = 0.05", "tolerance = 1.5");
+        bad("tolerance = 0.05", "tolerance = 0.05\ntolerance_abs = -1.0");
         bad(
             "direction = \"minimise\"\nrepeats",
             "direction = \"up\"\nrepeats",

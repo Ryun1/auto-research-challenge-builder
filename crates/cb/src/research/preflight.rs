@@ -383,12 +383,14 @@ pub fn run_all(dir: &Path) -> Result<Report, String> {
         };
         let sp = spread([x, y, z]);
         spreads.insert(a.id.clone(), sp);
+        let range = x.max(y).max(z) - x.min(y).min(z);
         let detail = format!(
-            "medians {x}, {y}, {z}; spread {sp:.4} vs tolerance {}; suggest tolerance >= {:.2}",
+            "medians {x}, {y}, {z}; spread {sp:.4} vs tolerance {}, range {range} vs tolerance_abs {}; suggest tolerance >= {:.2}",
             a.tolerance,
+            a.tolerance_abs,
             ceil_cent(2.0 * sp)
         );
-        let st = if sp > a.tolerance {
+        let st = if sp > a.tolerance && range > a.tolerance_abs {
             Status::Fail
         } else {
             Status::Pass
@@ -479,7 +481,7 @@ pub fn run_all(dir: &Path) -> Result<Report, String> {
                 } else {
                     (x - b).abs() / b.abs()
                 };
-                if rel > allow {
+                if rel > allow && (x - b).abs() > a.tolerance_abs {
                     off.push(format!(
                         "{}: median {x} vs baseline {b} (off by {rel:.3}, allowed {allow:.3})",
                         a.id

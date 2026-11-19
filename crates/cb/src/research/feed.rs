@@ -145,7 +145,7 @@ pub fn feed(root: &Path, slug: &str, url: &str, generated_at: &str) -> Result<Va
             .iter()
             .map(|a| {
                 json!({"id": a.id, "unit": a.unit, "direction": a.direction,
-                       "tolerance": a.tolerance, "repeats": a.repeats, "contracts": a.contracts})
+                       "tolerance": a.tolerance, "tolerance_abs": a.tolerance_abs, "repeats": a.repeats, "contracts": a.contracts})
             })
             .collect(),
     );

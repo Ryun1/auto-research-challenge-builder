@@ -15,6 +15,15 @@ pub fn median(sorted: &[f64]) -> f64 {
     }
 }
 
+/// Whether two axis values agree: `|a-b| <= max(rel * max(|a|,|b|), abs)`.
+/// With `rel` and `abs` both 0 this is exact equality.
+pub fn agrees(a: f64, b: f64, rel: f64, abs: f64) -> bool {
+    if rel == 0.0 && abs == 0.0 {
+        return a == b;
+    }
+    (a - b).abs() <= (rel * a.abs().max(b.abs())).max(abs)
+}
+
 /// `(property, ok)` for each check of a measurement.
 pub fn verdicts(m: &Value) -> Vec<(String, bool)> {
     m["checks"]
@@ -56,6 +65,18 @@ pub fn clip(s: &str, max: usize) -> String {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn agrees_relative_absolute_exact() {
+        use super::agrees;
+        assert!(agrees(10.0, 12.0, 0.2, 0.0));
+        assert!(!agrees(10.0, 13.0, 0.2, 0.0));
+        assert!(!agrees(0.375, 0.125, 0.3, 0.0));
+        assert!(agrees(0.375, 0.125, 0.3, 0.25));
+        assert!(!agrees(3.0, 0.5, 0.3, 1.0));
+        assert!(agrees(5.0, 5.0, 0.0, 0.0));
+        assert!(!agrees(5.0, 5.0001, 0.0, 0.0));
+    }
+
     use super::*;
 
     #[test]

@@ -90,6 +90,7 @@ unit      = "ADA"
 direction = "minimise"        # minimise | maximise; never combined
 repeats   = 1                 # judge runs that sample this axis (same seed)
 tolerance = 0.05              # relative; the two runs on main must agree within it
+tolerance_abs = 0.0           # absolute floor, in the axis unit, for axes near zero (default 0)
 # contracts = ["wallet@1"]    # optional: only these contracts measure it
 
 [taxonomy]
@@ -106,7 +107,7 @@ Validation (all refusals are errors from `ResearchSpec::parse`):
   (canonical relative paths); `deferred` needs a non-empty `admits_when`.
 - `properties`: ids unique slugs; `check` one of the three; `contract` exists.
 - `axes` not empty; ids unique, `[a-z0-9_-]+`; unit not empty; direction
-  valid; `1 <= repeats <= 20`; `0 <= tolerance < 1`; `contracts` entries exist.
+  valid; `1 <= repeats <= 20`; `0 <= tolerance < 1`; `tolerance_abs` finite and `>= 0`; `contracts` entries exist.
 - `taxonomy.file` canonical; the file loads (below).
 
 `taxonomy.toml`, after chemistry-walk:
@@ -287,8 +288,9 @@ speak a line protocol). It reads `CB_LIMITS` and `CB_SANDBOX` from its env.
 - `pr`: one run; status `valid` / `rejected` / `infra_failed` as measured.
 - `accept` / `baseline`: two runs. Any `infra_failed` → `infra_failed`; any
   `rejected` → `rejected` (reasons joined); verdicts differ → `infra_failed`;
-  for each axis `|a - b| > tolerance * max(|a|, |b|)` (exact equality when
-  `tolerance = 0`) → `infra_failed` naming the axis; else `accepted`.
+  for each axis `|a - b| > max(tolerance * max(|a|, |b|), tolerance_abs)`
+  (exact equality when both are 0) → `infra_failed` naming the axis; else
+  `accepted`. The absolute floor keeps axes near zero from failing on noise.
   `baseline` requires id `baseline` and refuses a second accepted baseline;
   `accept` refuses id `baseline`.
 - Row (`results.jsonl`, one file per challenge, `merge=union` as today):
@@ -372,12 +374,12 @@ the same `Report`. Checks:
 - **determinism / salted inputs / axis noise**: the baseline measured three
   times: seeds A, A, B. Same seed: same `inputs` and verdicts. Seed B:
   different `inputs`, still `valid`. Per axis, the relative spread of the
-  three medians (`(max - min) / |median|`) must be `<= tolerance` (the two main
-  runs use independent seeds); the detail suggests `ceil(2 * spread, 0.01)`.
+  three medians (`(max - min) / |median|`) must be `<= tolerance`, unless the absolute range of the three medians is
+  `<= tolerance_abs` (the two main runs use independent seeds); the detail suggests `ceil(2 * spread, 0.01)`.
 - **broken variants**: `preflight/broken/<name>/` are whole submissions
   measured with seed A. Required: `off-by-one`, `partial`, `constant`,
   `self-report`; others may be added. Each must build, then: `self-report` must
-  be `valid` with every axis within `max(tolerance, 2 * observed spread)` of
+  be `valid` with every axis within `max(tolerance, 2 * observed spread)` (relative) or `tolerance_abs` (absolute) of
   the baseline (its self-reported numbers were ignored); every other variant
   must be `rejected`. A variant may carry an `EXPECT` file: its first non-empty
   line is `valid`, or a substring the rejection reason must contain (so
@@ -392,7 +394,7 @@ the same `Report`. Checks:
 
 ```
 {feed_schema_version: 2, type: "research", slug, url, generated_at, status, runner,
- axes: [{id, unit, direction, tolerance, repeats, contracts}],
+ axes: [{id, unit, direction, tolerance, tolerance_abs, repeats, contracts}],
  contracts: [{id, status, admits_when, interface, choice_space}],
  properties: [{id, check, contract}],
  taxonomy: {version, axes: [{id, definition, values: [{id, definition, count}]}], rules: [text]},

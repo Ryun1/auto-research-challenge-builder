@@ -50,6 +50,7 @@ unit      = "ms"
 direction = "minimise"      # minimise | maximise; never combined
 repeats   = 3               # judge runs that sample this axis (same seed)
 tolerance = 0.2             # relative; the two runs on main must agree within it
+tolerance_abs = 0.0         # absolute floor, in the axis unit, for axes near zero
 
 [[axes]]
 id        = "size_bytes"

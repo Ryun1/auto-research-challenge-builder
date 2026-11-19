@@ -3,7 +3,7 @@
 
 use super::results::{accepted, direction_of};
 use super::spec::{Declaration, ResearchSpec};
-use super::util::{median, verdicts};
+use super::util::{agrees, median, verdicts};
 use crate::pipeline::{read_results, Attempt};
 use serde_json::{json, Map, Value};
 use std::path::Path;
@@ -45,15 +45,10 @@ fn disagreement(spec: &ResearchSpec, contract: &str, runs: &[Value]) -> Option<S
         let (Some(a), Some(b)) = (m(&runs[0]), m(&runs[1])) else {
             return Some(format!("axis {}: missing from a run", ax.id));
         };
-        let bad = if ax.tolerance == 0.0 {
-            a != b
-        } else {
-            (a - b).abs() > ax.tolerance * a.abs().max(b.abs())
-        };
-        if bad {
+        if !agrees(a, b, ax.tolerance, ax.tolerance_abs) {
             return Some(format!(
-                "axis {}: runs measured {a} and {b}, beyond tolerance {}",
-                ax.id, ax.tolerance
+                "axis {}: runs measured {a} and {b}, beyond tolerance {} (abs {})",
+                ax.id, ax.tolerance, ax.tolerance_abs
             ));
         }
     }
@@ -309,6 +304,38 @@ mod tests {
         .unwrap();
         assert_eq!(e["status"], "infra_failed");
         assert!(e["reason"].as_str().unwrap().contains("size_bytes"));
+    }
+
+    #[test]
+    fn accept_absolute_floor_accepts_near_zero() {
+        let root = setup("absfloor");
+        let p = root.join("toy/challenge.toml");
+        let t = std::fs::read_to_string(&p).unwrap();
+        std::fs::write(
+            &p,
+            t.replace("tolerance = 0.05", "tolerance = 0.3")
+                .replace("tolerance_abs = 0.0 ", "tolerance_abs = 1.0"),
+        )
+        .unwrap();
+        let ok = record(
+            &root,
+            "toy",
+            &decl("a", ""),
+            &[run("a", 0.375, 5.0), run("a", 0.125, 5.0)],
+            &at("accept"),
+        )
+        .unwrap();
+        assert_eq!(ok["status"], "accepted", "{ok}");
+        let bad = record(
+            &root,
+            "toy",
+            &decl("b", ""),
+            &[run("b", 3.0, 5.0), run("b", 0.5, 5.0)],
+            &at("accept"),
+        )
+        .unwrap();
+        assert_eq!(bad["status"], "infra_failed");
+        assert!(bad["reason"].as_str().unwrap().contains("abs 1"));
     }
 
     #[test]
