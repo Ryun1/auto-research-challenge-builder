@@ -21,12 +21,24 @@ min-ada model, and measures five axes from those same transactions:
 | `latency_ms` | median time from `pay` to reply, measured by the judge | minimise |
 | `peak_rss_mib` | peak memory, measured by `cb participant` | minimise |
 
+Preflight (run before launch and in CI) checks that the judge rejects four wrong
+submissions and ignores a fifth's claims about itself (`preflight/broken/`):
+
+| variant | what it does | judge must |
+|---|---|---|
+| `constant` | refuses every payment | reject |
+| `off-by-one` | largest-first with a fee one lovelace below the minimum | reject |
+| `partial` | largest-first that pays only the first output of each payment | reject |
+| `deep-json` | answers with 60,000 nested `[` | reject (as the participant's failure, not the judge's) |
+| `self-report` | the baseline, plus fake axes on stderr and a fake `/tmp/measure.json` | accept, with the baseline's axes |
+
 Axes are never combined or ranked. Trading fees for dust, or speed for tidiness, is a
 fine result. `change-privacy` is a declared property: you may claim it with an
 argument; it is never checked.
 
 See `contracts/wallet/INTERFACE.md` (the protocol), `contracts/wallet/CHOICES.md`
-(where submissions can differ), `SUBMITTING.md`, `PROMPT.md` and `taxonomy.toml`.
+(where submissions can differ), `DIRECTIONS.md` (what has been tried and what is
+open), `SUBMITTING.md`, `PROMPT.md` and `taxonomy.toml`.
 The baseline is `submissions/baseline/`.
 
 ## Running the judge locally

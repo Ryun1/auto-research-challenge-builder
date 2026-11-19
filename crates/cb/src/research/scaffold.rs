@@ -65,7 +65,12 @@ file = "taxonomy.toml"
     )
 }
 
-const TAXONOMY: &str = r#"version = 1
+const TAXONOMY: &str = r#"# Maintainers edit this file in their own PR, never in a submission PR.
+# Adding axes or values keeps `version`. Renaming or removing one changes what
+# earlier labels mean: copy this file to taxonomy-v<version>.toml first, then
+# bump `version`. results.jsonl rows record the version they were labelled under
+# (`taxonomy_version`); rows without it predate the field and mean version 1.
+version = 1
 
 [[axes]]
 id         = "approach"
@@ -76,7 +81,8 @@ values = [
 ]
 
 [[rules]]
-text = "TODO: example rule, e.g. a value that is only plausible with another"
+text   = "TODO: example rule, e.g. a value that is only plausible with another"
+reason = "TODO: why it holds"
 "#;
 
 const BASELINE_DECL: &str = r#"id        = "baseline"
@@ -116,6 +122,8 @@ exit 1
 "#;
 
 const INTERFACE: &str = "# Contract main@1: interface\n\nTODO: what a submission must provide (the files `build.sh` leaves behind, how the\njudge talks to it, input and output formats, time and memory limits).\n";
+
+const DIRECTIONS: &str = "# Directions\n\nWhat has been tried and what is open. Maintainers keep this file up to date after\nsubmissions are accepted (and in the same PR as any taxonomy edit); participants\nnever edit it. A direction missing from\nit is still welcome.\n\n## Explored\n\nTODO: one short paragraph per direction with accepted submissions: what it does,\nwhich axes it moved (numbers from `results.jsonl`) and the submission ids.\n\n## Open\n\nTODO: for each, the mechanism, the expected effect on which axes, and the cheapest\ntest that could show it wrong. Say what is unknown rather than guess.\n";
 
 const CHOICES: &str = "# Contract main@1: choice space\n\nTODO: the decisions open to participants (algorithms, data structures, languages,\ntrade-offs between axes). Not rules: a map of where submissions can differ.\n";
 
@@ -173,7 +181,9 @@ that changes nothing else. Merged submissions are immutable.
    properties only) and `model`.
 3. Novelty is your own declaration and is never judged. `new` starts a direction
    `<name>` that no accepted submission uses. `builds-on` names an accepted
-   `parent`; copy its directory and edit it. The direction is inherited.
+   `parent`; copy its directory and edit it. The direction is inherited. A port
+   to another language, or a new name, seed or constant on an accepted approach,
+   is `builds-on`, not `new`.
 4. CI builds your submission and runs the contract's judge, which checks the
    properties and measures every axis. Those numbers are a claim from the PR run.
 5. There is no record to beat and no minimum improvement. If the checks pass, the
@@ -188,21 +198,23 @@ fn prompt(slug: &str) -> String {
         r#"# Prompt for {slug}
 
 You are working on the research challenge `{slug}`. Read `contracts/main/INTERFACE.md`
-and `contracts/main/CHOICES.md`, then look at `submissions/` and `taxonomy.toml` to see
-what has been tried.
+and `contracts/main/CHOICES.md`, then `DIRECTIONS.md` (what has been tried and what is
+open), `submissions/` and `taxonomy.toml`.
 
 Create ONE new directory `submissions/<id>/` and change nothing else. It needs a
 `submission.toml` and an executable `build.sh`; see `SUBMITTING.md` for the fields.
 Either start a new direction or copy an accepted submission's directory and build on it.
-Declare novelty honestly. You choose which axes in `challenge.toml` to push: they are
-measured, recorded and never ranked or combined, so a trade-off is a fine result.
+Declare novelty honestly: porting an accepted submission to another language, or
+retuning its constants or seed, is `builds-on`, not a new direction. You choose which
+axes in `challenge.toml` to push: they are measured, recorded and never ranked or
+combined, so a trade-off is a fine result.
 "#
     )
 }
 
 fn readme(slug: &str) -> String {
     format!(
-        "# {slug}\n\nTODO: what this research challenge explores and why it has no single winner.\n\nSee `SUBMITTING.md`, `PROMPT.md`, `contracts/main/` and `taxonomy.toml`.\n"
+        "# {slug}\n\nTODO: what this research challenge explores and why it has no single winner.\n\nSee `SUBMITTING.md`, `PROMPT.md`, `DIRECTIONS.md`, `contracts/main/` and `taxonomy.toml`.\n"
     )
 }
 
@@ -273,6 +285,7 @@ pub fn scaffold(root: &Path, slug: &str) -> Result<PathBuf, String> {
     write("SUBMITTING.md", &submitting(slug), false)?;
     write("PROMPT.md", &prompt(slug), false)?;
     write("README.md", &readme(slug), false)?;
+    write("DIRECTIONS.md", DIRECTIONS, false)?;
     Ok(dir)
 }
 
@@ -311,6 +324,7 @@ mod tests {
             "SUBMITTING.md",
             "PROMPT.md",
             "README.md",
+            "DIRECTIONS.md",
         ] {
             assert!(dir.join(rel).exists(), "{rel}");
         }

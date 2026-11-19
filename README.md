@@ -40,7 +40,9 @@ indexed in [docs/](docs/README.md).
 
 `challenge.toml` is the source of truth for status and editable paths. Each
 challenge has a `SUBMITTING.md` for participants and a `THREAT_MODEL.md`
-covering how a wrong answer might pass the verifier.
+covering how a wrong answer might pass the verifier. Research challenges also
+have a `DIRECTIONS.md`, kept by the maintainer: what has been tried and what is
+open.
 
 Results are published at https://ryun1.github.io/auto-research-challenges/,
 with a feed per challenge at `feeds/<slug>.json`.

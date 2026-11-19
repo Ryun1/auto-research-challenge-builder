@@ -397,7 +397,7 @@ the same `Report`. Checks:
  axes: [{id, unit, direction, tolerance, tolerance_abs, repeats, contracts}],
  contracts: [{id, status, admits_when, interface, choice_space}],
  properties: [{id, check, contract}],
- taxonomy: {version, axes: [{id, definition, values: [{id, definition, count}]}], rules: [text]},
+ taxonomy: {version, axes: [{id, definition, values: [{id, definition, count}]}], rules: [{text, reason}]},
  submissions: [{id, baseline, contract, novelty, direction, parent, taxonomy, proposed,
                 summary, by, model, at, commit, axes, checks, claims}],
  directions: [{name, root, submissions: [id]}],

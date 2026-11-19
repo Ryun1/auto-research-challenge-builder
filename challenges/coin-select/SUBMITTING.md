@@ -14,7 +14,9 @@ that changes nothing else. Merged submissions are immutable.
    (for the declared property `change-privacy` only) and `model`.
 3. Novelty is your own declaration and is never judged. `new` starts a direction
    `<name>` that no accepted submission uses. `builds-on` names an accepted
-   `parent`; copy its directory and edit it. The direction is inherited.
+   `parent`; copy its directory and edit it. The direction is inherited. A port
+   to another language, or a new name, seed or constant on an accepted approach,
+   is `builds-on`, not `new`.
 4. Run the judge locally first (see `README.md`). CI then builds your submission and
    runs the same judge, which checks the properties and measures every axis. Those
    numbers are a claim from the PR run.
