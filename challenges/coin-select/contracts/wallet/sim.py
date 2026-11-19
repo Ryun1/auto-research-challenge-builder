@@ -4,6 +4,7 @@ largest-first reference for contract wallet@1. Trusted judge code, stdlib only.
 
 `python3 sim.py --self-test` runs the built-in checks.
 """
+import hashlib
 import math
 import random
 import sys
@@ -73,8 +74,47 @@ def gen_scenario(rng):
     return ev[:N_EVENTS + 1]  # any prefix is fundable
 
 
+class HashRandom(random.Random):
+    """A random source from SHA-256 in counter mode over (seed, k, counter), so
+    the values a participant sees reveal nothing about later ones (unlike
+    MT19937, whose state can be recovered from its outputs)."""
+
+    def __init__(self, seed, k):
+        self._key = ("%d:%d:" % (seed, k)).encode()
+        self._ctr = 0
+        self._pool = 0
+        self._bits = 0
+        super().__init__(0)
+
+    def seed(self, a=None, version=2):  # random.Random.__init__ calls this
+        pass
+
+    def getstate(self):
+        return (self._key, self._ctr, self._pool, self._bits)
+
+    def setstate(self, state):
+        self._key, self._ctr, self._pool, self._bits = state
+
+    def _block(self):
+        h = hashlib.sha256(self._key + str(self._ctr).encode()).digest()
+        self._ctr += 1
+        return int.from_bytes(h, "big")
+
+    def getrandbits(self, k):
+        if k < 0:
+            raise ValueError("number of bits must be non-negative")
+        out, n = 0, 0
+        while n < k:
+            out |= self._block() << n
+            n += 256
+        return out & ((1 << k) - 1)
+
+    def random(self):
+        return self.getrandbits(53) / (1 << 53)
+
+
 def gen_scenarios(seed):
-    return [gen_scenario(random.Random(seed * 1000 + k)) for k in range(N_SCENARIOS)]
+    return [gen_scenario(HashRandom(seed, k)) for k in range(N_SCENARIOS)]
 
 
 # ---------------------------------------------------------------- validator
@@ -207,6 +247,19 @@ def self_test():
     a = gen_scenarios(7)
     assert a == gen_scenarios(7) and gen_scenarios(8) != a
     assert len(a) == N_SCENARIOS
+    # same (seed, k) -> identical scenarios; different seeds or k differ
+    assert gen_scenario(HashRandom(7, 3)) == gen_scenario(HashRandom(7, 3)) == a[3]
+    assert gen_scenario(HashRandom(7, 3)) != gen_scenario(HashRandom(8, 3))
+    assert a[0] != a[1]
+    r = HashRandom(1, 1)
+    assert 0 <= r.random() < 1 and r.getrandbits(0) == 0 and 0 <= r.getrandbits(300) < 1 << 300
+    st = r.getstate()
+    x = [r.randint(1, 100) for _ in range(5)]
+    r.setstate(st)
+    assert x == [r.randint(1, 100) for _ in range(5)]
+    lst = list(range(10))
+    r.shuffle(lst)
+    assert sorted(lst) == list(range(10)) and r.choice([5]) == 5
     for seed in range(5):
         for sc in gen_scenarios(seed):
             assert len(sc) == N_EVENTS + 1

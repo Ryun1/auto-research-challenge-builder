@@ -38,6 +38,10 @@ class Fail(Exception):
         self.check, self.detail = check, detail
 
 
+class Infra(Exception):
+    """A failure of the launcher or sandbox, not of the participant."""
+
+
 class Peer:
     def __init__(self, cmd, cwd, env):
         self.proc = subprocess.Popen(cmd, cwd=cwd, env=env, stdin=subprocess.PIPE,
@@ -132,10 +136,23 @@ def read_report(path):
         return None
 
 
+def check_exit(rep, code):
+    """Raise Infra when the launcher itself failed (report status `infra`, or no
+    report at all with the launcher's exit code 125)."""
+    if rep is None:
+        if code == 125:
+            raise Infra("participant launcher: failed with exit 125 and no report")
+        return
+    if rep.get("status") == "infra":
+        raise Infra("participant launcher: %s" % (rep.get("reason") or "sandbox setup failed"))
+
+
 def describe_exit(rep):
     if rep is None:
         return "participant did not finish"
     st = rep.get("status")
+    if st == "memory_limit":
+        return "participant hit the memory limit"
     if st == "ok":
         return "participant exited early"
     if st == "timeout":
@@ -167,23 +184,33 @@ def run_scenario(k, scenario, env, sub_dir, tmp):
                 peer.send({"type": "pay", "id": e["id"],
                            "outputs": [{"lovelace": v} for v in e["outputs"]]})
                 line, t1 = peer.readline()
+                stats["lat"].append((t1 - t0) * 1000.0)
+                # Anything raised while decoding or checking a participant
+                # reply (RecursionError, TypeError, OverflowError, ...) is the
+                # participant's failure, never a judge bug.
                 try:
                     reply = json.loads(line.decode("utf-8"))
-                except ValueError:
+                    if isinstance(reply, dict) and reply.get("refuse") is True:
+                        ref = sim.largest_first(wallet, e["outputs"])
+                        refused = ref is None
+                        err = None
+                    else:
+                        refused = False
+                        err = sim.validate_tx(wallet, e["outputs"], reply)
+                        if not err:
+                            sim.apply_tx(wallet, e["id"], reply)
+                            fee, n_in = reply["fee"], len(reply["inputs"])
+                except Exception:
                     raise Fail("valid-txs", "unparseable reply")
-                stats["lat"].append((t1 - t0) * 1000.0)
                 if isinstance(reply, dict) and reply.get("refuse") is True:
-                    ref = sim.largest_first(wallet, e["outputs"])
-                    if ref is not None:
+                    if not refused:
                         raise Fail("serves-feasible", "refused a payable payment")
                     stats["refused"] += 1
                     continue
-                err = sim.validate_tx(wallet, e["outputs"], reply)
                 if err:
                     raise Fail("valid-txs", err)
-                sim.apply_tx(wallet, e["id"], reply)
-                stats["fees"] += reply["fee"]
-                stats["inputs"] += len(reply["inputs"])
+                stats["fees"] += fee
+                stats["inputs"] += n_in
                 stats["txs"] += 1
             cur = "end"
             peer.send({"type": "end"})
@@ -193,10 +220,13 @@ def run_scenario(k, scenario, env, sub_dir, tmp):
                     peer.proc.wait(timeout=WAIT_SECS)
                 except subprocess.TimeoutExpired:
                     pass
-                f.detail = describe_exit(read_report(report))
+                rep = read_report(report)
+                check_exit(rep, peer.proc.returncode)
+                f.detail = describe_exit(rep)
             raise
         code = peer.finish()
         rep = read_report(report)
+        check_exit(rep, code)
         if code is None or rep is None:
             raise Fail("valid-txs", "participant did not finish after end")
         if rep.get("status") != "ok" or code != 0:
@@ -220,7 +250,7 @@ def main():
     env.pop("CB_SEED", None)
     tmp = tempfile.mkdtemp()
     out = {"ok": False, "inputs": inputs, "checks": [], "axes": {}}
-    results, failure = [], None
+    results, failure, infra = [], None, None
     try:
         for k, sc in enumerate(scenarios):
             try:
@@ -228,8 +258,14 @@ def main():
             except Fail as f:
                 failure = (f.check, "scenario %d, %s" % (k, f.detail))
                 break
+            except Infra as i:
+                infra = str(i)
+                break
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
+    if infra is not None:
+        return {"ok": False, "infra": True, "inputs": inputs, "checks": [], "axes": {},
+                "detail": infra}
     for prop in ("valid-txs", "serves-feasible"):
         bad = failure is not None and failure[0] == prop
         out["checks"].append({"property": prop, "ok": not bad, "detail": failure[1] if bad else ""})

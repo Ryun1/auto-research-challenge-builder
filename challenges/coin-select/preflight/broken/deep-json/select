@@ -1,0 +1,11 @@
+#!/usr/bin/env python3
+"""BROKEN: answers the first pay with a 60000-deep nested JSON array."""
+import json
+import sys
+
+for line in sys.stdin:
+    t = json.loads(line)["type"]
+    if t == "pay":
+        sys.stdout.write("[" * 60000 + "\n")
+        sys.stdout.flush()
+        break
