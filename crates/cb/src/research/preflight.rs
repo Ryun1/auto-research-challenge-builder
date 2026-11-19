@@ -455,6 +455,15 @@ pub fn run_all(dir: &Path) -> Result<Report, String> {
                     str_of(&v, "reason")
                 ),
             );
+        } else if v["status"] == "rejected" && v["build"]["ok"] != true {
+            r.push(
+                &label,
+                Status::Fail,
+                format!(
+                    "rejected before the judge ran ({}), so it doesn't test the judge",
+                    str_of(&v, "reason")
+                ),
+            );
         } else if name == "self-report" {
             if !valid(&v) {
                 r.push(&label, Status::Fail, format!("must be valid: {}", why(&v)));
@@ -632,6 +641,18 @@ mod tests {
         let c = check(&r, "axis noise: time_ms");
         assert_eq!(c.status, Status::Fail, "{}", c.detail);
         assert!(c.detail.contains("suggest tolerance >="), "{}", c.detail);
+    }
+
+    #[test]
+    fn variant_rejected_before_judge_blocks() {
+        let dir = toy_ready(&tmp("pre"), "toy", GOOD_JUDGE);
+        let p = dir.join("preflight/broken/constant/submission.toml");
+        let t = std::fs::read_to_string(&p).unwrap();
+        std::fs::write(&p, t.replace("id = \"constant\"", "id = \"other\"")).unwrap();
+        let r = run_all(&dir).unwrap();
+        let c = check(&r, "broken: constant");
+        assert_eq!(c.status, Status::Fail, "{}", c.detail);
+        assert!(c.detail.contains("before the judge ran"), "{}", c.detail);
     }
 
     #[test]
