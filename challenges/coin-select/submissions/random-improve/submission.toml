@@ -1,0 +1,7 @@
+id        = "random-improve"
+contract  = "wallet@1"
+novelty   = "new"
+direction = "random-improve"
+taxonomy  = { strategy = "random-improve", change = "payment-shaped", consolidation = "none", language = "rust" }
+summary   = "CIP-2 random-improve in Rust: random selection until covered, improvement towards 2x the payment, change shaped like the payment outputs, largest-first fallback."
+model     = "claude-sonnet-5-5"
