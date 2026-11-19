@@ -26,6 +26,29 @@ fn claims(v: &Value) -> Value {
     Value::Array(list)
 }
 
+/// The accepted row's predictions, rebuilt field by field (a row is data from
+/// results.jsonl; only known keys and short strings reach the site).
+fn predictions(v: &Value) -> Value {
+    let list: Vec<Value> = v
+        .as_array()
+        .map(|a| {
+            a.iter()
+                .take(16)
+                .map(|p| {
+                    json!({"axis": clip(str_of(&p["axis"]), 64),
+                           "expected": clip(str_of(&p["expected"]), 16),
+                           "measured": clip(str_of(&p["measured"]), 16),
+                           "held": p["held"].as_bool(),
+                           "reference": clip(str_of(&p["reference"]), 64),
+                           "own": p["own"].as_f64(),
+                           "reference_value": p["reference_value"].as_f64()})
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    Value::Array(list)
+}
+
 pub fn feed(root: &Path, slug: &str, url: &str, generated_at: &str) -> Result<Value, String> {
     let spec = ResearchSpec::load(&root.join(slug))?;
     let results = read_results(root, slug)?;
@@ -58,6 +81,8 @@ pub fn feed(root: &Path, slug: &str, url: &str, generated_at: &str) -> Result<Va
                 "axes": r["axes"],
                 "checks": r["checks"],
                 "claims": claims(&r["claims"]),
+                "hypothesis": clip(str_of(&r["hypothesis"]), 300),
+                "predictions": predictions(&r["predictions"]),
             })
         })
         .collect();
@@ -208,7 +233,11 @@ mod tests {
                "claims": [{"property": "correct", "argument": "x".repeat(2500)}],
                "axes": {"time_ms": {"median": 1.5, "min": 1.0, "max": 2.0, "n": 3}},
                "checks": [{"property": "correct", "check": "mechanical", "ok": true, "detail": ""}],
-               "runs": [{"seed": "SEEDVALUE"}]})
+               "runs": [{"seed": "SEEDVALUE"}],
+               "hypothesis": "h".repeat(400),
+               "predictions": [{"axis": "time_ms", "expected": "lower", "measured": "same",
+                                "held": false, "reference": "baseline", "own": 1.5,
+                                "reference_value": 1.5, "extra": "dropped"}]})
     }
 
     #[test]
@@ -332,6 +361,11 @@ mod tests {
         let alpha = dirs.iter().find(|d| d["name"] == "alpha").unwrap();
         assert_eq!(alpha["root"], "a");
         assert_eq!(alpha["submissions"], json!(["b", "a"]));
+        assert_eq!(subs[2]["hypothesis"].as_str().unwrap().len(), 300);
+        let pred = &subs[2]["predictions"][0];
+        assert_eq!(pred["measured"], "same");
+        assert_eq!(pred["held"], false);
+        assert!(pred.get("extra").is_none());
         let rule = &f["taxonomy"]["rules"][0];
         assert!(!rule["text"].as_str().unwrap().is_empty());
         assert!(rule["reason"].is_string());

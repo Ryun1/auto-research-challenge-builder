@@ -147,6 +147,12 @@ pub fn record(
         "taxonomy_version": spec.tax.version,
         "proposed": decl.proposed(&spec.tax), "summary": decl.summary,
         "claims": decl.to_json()["claims"], "axes": axes, "checks": runs[0]["checks"],
+        "hypothesis": decl.hypothesis, "expected": decl.expected,
+        "predictions": if axes.is_null() {
+            json!([])
+        } else {
+            super::predict::predictions(&spec, decl, &axes, &accepted(&rows))
+        },
         "runs": runs.iter().map(|r| json!({
             "seed": r["seed"], "host": r["host"], "host_policy": r["host_policy"],
             "sandboxed": r["sandboxed"], "status": status_of(r), "reason": r["reason"],
@@ -259,6 +265,63 @@ mod tests {
         };
         let e = record(&root, "toy", &d, &[run("a", 1.0, 1.0)], &at("pr")).unwrap();
         assert_eq!(e["direction"], "baseline");
+    }
+
+    #[test]
+    fn predictions_against_parent_and_baseline() {
+        let root = setup("pred");
+        let b = Declaration {
+            direction: "baseline".into(),
+            ..decl("baseline", "")
+        };
+        let two = |id: &str, fees: f64| [run(id, fees, 5.0), run(id, fees, 5.0)];
+        record(&root, "toy", &b, &two("baseline", 10.0), &at("baseline")).unwrap();
+        // new: relative to the baseline. fees 8 vs 10 is lower (tolerance 5%).
+        let a = decl(
+            "a",
+            "hypothesis = \"h\"\nexpected = { fees = \"lower\", size_bytes = \"higher\" }",
+        );
+        let e = record(&root, "toy", &a, &[run("a", 8.0, 5.0)], &at("pr")).unwrap();
+        assert_eq!(e["hypothesis"], "h");
+        let p = e["predictions"].as_array().unwrap();
+        let get = |p: &[Value], ax: &str| p.iter().find(|x| x["axis"] == ax).unwrap().clone();
+        let fees = get(p, "fees");
+        assert_eq!(fees["reference"], "baseline");
+        assert_eq!(fees["measured"], "lower");
+        assert_eq!(fees["held"], true);
+        assert_eq!(fees["own"], 8.0);
+        assert_eq!(fees["reference_value"], 10.0);
+        let size = get(p, "size_bytes");
+        assert_eq!(size["measured"], "same");
+        assert_eq!(size["held"], false);
+        record(&root, "toy", &a, &two("a", 8.0), &at("accept")).unwrap();
+        // builds-on: relative to the parent a (8), so 8.2 is the same.
+        let c = Declaration {
+            novelty: "builds-on".into(),
+            parent: "a".into(),
+            direction: String::new(),
+            ..decl("c", "expected = { fees = \"lower\" }")
+        };
+        let e = record(&root, "toy", &c, &[run("c", 8.2, 5.0)], &at("pr")).unwrap();
+        let fees = get(e["predictions"].as_array().unwrap(), "fees");
+        assert_eq!(fees["reference"], "a");
+        assert_eq!(fees["measured"], "same");
+        assert_eq!(fees["held"], false);
+        // A rejected run has no axes, so no predictions.
+        let mut bad = run("c", 1.0, 1.0);
+        bad["status"] = json!("rejected");
+        let e = record(&root, "toy", &c, &[bad], &at("pr")).unwrap();
+        assert_eq!(e["predictions"], json!([]));
+    }
+
+    #[test]
+    fn prediction_without_reference_is_unknown() {
+        let root = setup("pred-none");
+        let a = decl("a", "expected = { fees = \"lower\" }");
+        let e = record(&root, "toy", &a, &[run("a", 8.0, 5.0)], &at("pr")).unwrap();
+        let p = &e["predictions"][0];
+        assert_eq!(p["measured"], "unknown");
+        assert_eq!(p["held"], Value::Null);
     }
 
     #[test]

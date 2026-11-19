@@ -178,15 +178,20 @@ that changes nothing else. Merged submissions are immutable.
    runs offline in a sandbox.
 2. `submission.toml` declares: `id` (the dir name), `contract`, `novelty`,
    `direction`, `parent`, `taxonomy`, `summary`, optional `claims` (for declared
-   properties only) and `model`.
+   properties only), `model`, and optionally `hypothesis` and `expected`.
 3. Novelty is your own declaration and is never judged. `new` starts a direction
    `<name>` that no accepted submission uses. `builds-on` names an accepted
    `parent`; copy its directory and edit it. The direction is inherited. A port
    to another language, or a new name, seed or constant on an accepted approach,
    is `builds-on`, not `new`.
-4. CI builds your submission and runs the contract's judge, which checks the
+4. Say what you expect before it is measured. `hypothesis` is one sentence (at
+   most 300 chars). `expected` maps axes to `lower`, `same` or `higher`, relative
+   to your `parent` (builds-on) or the baseline (new). The PR comment and the site
+   show each prediction against the measurement. A refuted prediction is a useful
+   result: submit it as it is rather than tuning until it looks good.
+5. CI builds your submission and runs the contract's judge, which checks the
    properties and measures every axis. Those numbers are a claim from the PR run.
-5. There is no record to beat and no minimum improvement. If the checks pass, the
+6. There is no record to beat and no minimum improvement. If the checks pass, the
    PR is landed on main automatically, two clean runs there record it on the map,
    and the PR is closed. Failing and noisy attempts are recorded too.
 "#
@@ -207,7 +212,9 @@ Either start a new direction or copy an accepted submission's directory and buil
 Declare novelty honestly: porting an accepted submission to another language, or
 retuning its constants or seed, is `builds-on`, not a new direction. You choose which
 axes in `challenge.toml` to push: they are measured, recorded and never ranked or
-combined, so a trade-off is a fine result.
+combined, so a trade-off is a fine result. Before measuring, write your hypothesis
+and the axes you expect to move in `submission.toml` (`hypothesis`, `expected`); if
+the measurement refutes it, submit anyway and say so.
 "#
     )
 }
