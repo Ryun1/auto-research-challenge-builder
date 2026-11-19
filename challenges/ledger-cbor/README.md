@@ -38,9 +38,12 @@ is none on almost every tx; upstream's own `rnf` leaves a few thunks on some.
 **Score.** Callgrind instructions to decode 800 seeded txs once, minus a 0-pass
 run (start-up plus reading the input). The timed pass is `harness decode`:
 `decodeFullAnnotator` at PV 11 into `MempoolTx ConwayEra`, then `rnf`. The RTS timer is off (`-V0`), so counts are deterministic: `speedup = reference / candidate`. A paired wall-time run guards
-against regressions (as in `kits/rust`). It rejects a candidate whose wall-time speedup is below 0.92
-(`max_dispersion`). A measurement too noisy to judge is repeated, up to three
-times; if none is stable the run is `infra_failed`. In CI
+against regressions (as in `kits/rust`). `[perf] max_dispersion` (0.08) sets
+both its limits: a measurement is too noisy to judge when either side's
+rel-MAD or the spread between blocks exceeds it, and a stable one rejects a
+candidate whose wall-time speedup is below `1 - max_dispersion` (0.92). A
+noisy measurement is repeated, up to three times; if none is stable the run is
+`infra_failed`. In CI
 (`CB_POOL=fresh`) the txs come from a pool of recent mainnet blocks fetched
 for that run. `corpus/pool.hex.gz` is only for local runs. To count, a change
 must beat the record by 1% (`min_improvement_bips = 100`).
