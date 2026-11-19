@@ -7,7 +7,8 @@ name: Promote
 on:
   push:
     branches: [main]
-    paths: ["challenges/**"]
+    # Research submissions are Accept's (landed by Comment): no run needed here.
+    paths: ["challenges/**", "!challenges/*/submissions/**"]
   workflow_dispatch:
     inputs:
       slug:
