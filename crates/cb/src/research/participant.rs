@@ -689,7 +689,10 @@ mod tests {
              while read -r _ _ _ _ mp _; do \
                case \"$mp\" in /proc|/proc/*|/sys|/sys/*) continue;; esac; \
                for a in {dirs}; do [ \"$mp\" != \"$a\" ] || continue 2; done; \
-               bad=\"$bad$(timeout 60 find \"$mp\" -xdev -maxdepth 6 -type d -writable 2>/dev/null)\"; \
+               while read -r w; do \
+                 for a in {dirs}; do [ \"$w\" != \"$a\" ] || continue 2; done; \
+                 bad=\"$bad$w\n\"; \
+               done < <(timeout 60 find \"$mp\" -xdev -maxdepth 6 -type d -writable 2>/dev/null); \
              done < /proc/self/mountinfo; \
              if ( : > /cb-probe ) 2>/dev/null; then bad=\"$bad /(writable)\"; fi; \
              if [ -n \"$bad\" ]; then \
