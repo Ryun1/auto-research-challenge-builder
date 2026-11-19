@@ -1,0 +1,87 @@
+[challenge]
+slug   = "coin-select"
+type   = "research"
+status = "draft"            # draft | open | closed
+runner = "ubuntu-24.04"     # pinned image
+
+[commands]
+setup = "./setup.sh"        # trusted, before any submission byte runs; may use the network
+
+[submissions]
+max_bytes  = 4194304        # per submission dir
+toolchains = ["python3 (ubuntu-24.04 image)", "rust stable via rustup (ubuntu-24.04 image)"]
+writable   = ["~/.cargo"]   # build-sandbox overlays (writes vanish after the build)
+
+[limits]                    # per participant process tree, enforced by `cb participant`
+cpu_secs   = 60
+memory_mib = 1024
+processes  = 32
+file_mib   = 64             # largest file it may write, and its private /tmp
+wall_secs  = 120
+
+[[contracts]]
+id           = "wallet@1"
+status       = "open"
+judge        = "contracts/wallet/judge"
+interface    = "contracts/wallet/INTERFACE.md"
+choice_space = "contracts/wallet/CHOICES.md"
+
+[[contracts]]
+id          = "wallet-multiasset@0"
+status      = "deferred"
+admits_when = "a multi-asset size and min-ada model, checked against cardano-ledger"
+
+[[properties]]
+id       = "valid-txs"
+check    = "mechanical"
+contract = "wallet@1"
+
+[[properties]]
+id       = "serves-feasible"
+check    = "mechanical"
+contract = "wallet@1"
+
+[[properties]]
+id       = "change-privacy"
+check    = "declared"
+contract = "wallet@1"
+
+# Tolerances are first guesses; they get tuned from preflight's measured spread.
+
+[[axes]]
+id        = "fees"
+unit      = "ADA"
+direction = "minimise"
+repeats   = 1
+tolerance = 0.1
+
+[[axes]]
+id        = "dust"
+unit      = "UTxOs"
+direction = "minimise"
+repeats   = 1
+tolerance = 0.3
+
+[[axes]]
+id        = "inputs_per_tx"
+unit      = "inputs"
+direction = "minimise"
+repeats   = 1
+tolerance = 0.1
+
+[[axes]]
+id        = "latency_ms"
+unit      = "ms"
+direction = "minimise"
+repeats   = 3
+tolerance = 0.9
+
+[[axes]]
+id        = "peak_rss_mib"
+unit      = "MiB"
+direction = "minimise"
+repeats   = 3
+tolerance = 0.5
+
+[taxonomy]
+file = "taxonomy.toml"

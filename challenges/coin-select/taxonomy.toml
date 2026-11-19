@@ -1,0 +1,49 @@
+version = 1
+
+[[axes]]
+id         = "strategy"
+definition = "How inputs are chosen for a payment"
+values = [
+  { id = "largest-first",   definition = "Sort by value, take the biggest UTxOs until the payment and fee are covered" },
+  { id = "random-improve",  definition = "CIP-2 random-improve: pick UTxOs at random, then improve towards an ideal change size" },
+  { id = "branch-and-bound", definition = "Depth-first search with pruning for a selection with no or minimal change" },
+  { id = "knapsack",        definition = "Dynamic-programming or heuristic subset-sum over the UTxO values" },
+  { id = "exhaustive",      definition = "Tries every subset (only practical for small wallets or with a cut-off)" },
+  { id = "other",           definition = "Anything else; name it in the summary" },
+]
+
+[[axes]]
+id         = "change"
+definition = "What happens to the leftover value after paying"
+values = [
+  { id = "single",             definition = "One change output" },
+  { id = "split",              definition = "Several change outputs, to keep the wallet granular" },
+  { id = "payment-shaped",     definition = "Change sized like the payment, so it is hard to tell from it" },
+  { id = "none-when-possible", definition = "Searches for an input set that needs no change, else falls back" },
+]
+
+[[axes]]
+id         = "consolidation"
+definition = "Whether the wallet merges small UTxOs while paying"
+values = [
+  { id = "none",          definition = "Never adds inputs only to merge dust" },
+  { id = "opportunistic", definition = "Adds small inputs when they are cheap to carry" },
+  { id = "threshold",     definition = "Consolidates once the wallet holds more than a chosen number of UTxOs" },
+]
+
+[[axes]]
+id         = "language"
+definition = "What the submission is written in"
+values = [
+  { id = "python", definition = "Python 3" },
+  { id = "rust",   definition = "Rust" },
+  { id = "c",      definition = "C or C++" },
+  { id = "go",     definition = "Go" },
+  { id = "other",  definition = "Anything else" },
+]
+
+[[rules]]
+text = "change = none-when-possible needs an exact-match search (branch-and-bound or exhaustive), not largest-first"
+
+[[rules]]
+text = "consolidation other than none costs extra inputs per transaction: expect it to trade fees now for dust later"

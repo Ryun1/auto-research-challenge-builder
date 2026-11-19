@@ -1,0 +1,6 @@
+id        = "baseline"
+contract  = "wallet@1"
+novelty   = "new"
+direction = "largest-first"
+taxonomy  = { strategy = "largest-first", change = "single", consolidation = "none", language = "python" }
+summary   = "CIP-2 largest-first: take the biggest UTxOs until the payment and fee are covered, one change output."

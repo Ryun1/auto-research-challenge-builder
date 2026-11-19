@@ -1,0 +1,6 @@
+id        = "self-report"
+contract  = "wallet@1"
+novelty   = "new"
+direction = "self-report"
+taxonomy  = { strategy = "largest-first", change = "single", consolidation = "none", language = "python" }
+summary   = "Largest-first that also prints fake axes to stderr and writes a fake measure.json; the judge must ignore both."
