@@ -1,4 +1,4 @@
-# coin-select
+# coin-select: Cardano UTxO coin selection, mapped not raced
 
 Cardano wallets must choose which UTxOs to spend for each payment (CIP-2). The
 transaction pays a fee that grows with its size, so fewer inputs is cheaper now. But
