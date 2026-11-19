@@ -26,7 +26,8 @@ fine result. `change-privacy` is a declared property: you may claim it with an
 argument; it is never checked.
 
 See `contracts/wallet/INTERFACE.md` (the protocol), `contracts/wallet/CHOICES.md`
-(where submissions can differ), `SUBMITTING.md`, `PROMPT.md` and `taxonomy.toml`.
+(where submissions can differ), `DIRECTIONS.md` (what has been tried and what is
+open), `SUBMITTING.md`, `PROMPT.md` and `taxonomy.toml`.
 The baseline is `submissions/baseline/`.
 
 ## Running the judge locally

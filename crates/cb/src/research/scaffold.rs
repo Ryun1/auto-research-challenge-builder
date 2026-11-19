@@ -117,6 +117,8 @@ exit 1
 
 const INTERFACE: &str = "# Contract main@1: interface\n\nTODO: what a submission must provide (the files `build.sh` leaves behind, how the\njudge talks to it, input and output formats, time and memory limits).\n";
 
+const DIRECTIONS: &str = "# Directions\n\nWhat has been tried and what is open. Maintainers keep this file up to date (in the\nsame PR as any taxonomy edit); participants never edit it. A direction missing from\nit is still welcome.\n\n## Explored\n\nTODO: one short paragraph per direction with accepted submissions: what it does,\nwhich axes it moved (numbers from `results.jsonl`) and the submission ids.\n\n## Open\n\nTODO: for each, the mechanism, the expected effect on which axes, and the cheapest\ntest that could show it wrong. Say what is unknown rather than guess.\n";
+
 const CHOICES: &str = "# Contract main@1: choice space\n\nTODO: the decisions open to participants (algorithms, data structures, languages,\ntrade-offs between axes). Not rules: a map of where submissions can differ.\n";
 
 const HARNESS_README: &str = "Shared judge code (generators, reference solutions, checkers) used by the\ncontracts' judges. Trusted: only maintainers change it. Delete if unused.\n";
@@ -188,8 +190,8 @@ fn prompt(slug: &str) -> String {
         r#"# Prompt for {slug}
 
 You are working on the research challenge `{slug}`. Read `contracts/main/INTERFACE.md`
-and `contracts/main/CHOICES.md`, then look at `submissions/` and `taxonomy.toml` to see
-what has been tried.
+and `contracts/main/CHOICES.md`, then `DIRECTIONS.md` (what has been tried and what is
+open), `submissions/` and `taxonomy.toml`.
 
 Create ONE new directory `submissions/<id>/` and change nothing else. It needs a
 `submission.toml` and an executable `build.sh`; see `SUBMITTING.md` for the fields.
@@ -202,7 +204,7 @@ measured, recorded and never ranked or combined, so a trade-off is a fine result
 
 fn readme(slug: &str) -> String {
     format!(
-        "# {slug}\n\nTODO: what this research challenge explores and why it has no single winner.\n\nSee `SUBMITTING.md`, `PROMPT.md`, `contracts/main/` and `taxonomy.toml`.\n"
+        "# {slug}\n\nTODO: what this research challenge explores and why it has no single winner.\n\nSee `SUBMITTING.md`, `PROMPT.md`, `DIRECTIONS.md`, `contracts/main/` and `taxonomy.toml`.\n"
     )
 }
 
@@ -273,6 +275,7 @@ pub fn scaffold(root: &Path, slug: &str) -> Result<PathBuf, String> {
     write("SUBMITTING.md", &submitting(slug), false)?;
     write("PROMPT.md", &prompt(slug), false)?;
     write("README.md", &readme(slug), false)?;
+    write("DIRECTIONS.md", DIRECTIONS, false)?;
     Ok(dir)
 }
 
@@ -311,6 +314,7 @@ mod tests {
             "SUBMITTING.md",
             "PROMPT.md",
             "README.md",
+            "DIRECTIONS.md",
         ] {
             assert!(dir.join(rel).exists(), "{rel}");
         }

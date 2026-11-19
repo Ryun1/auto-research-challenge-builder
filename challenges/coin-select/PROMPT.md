@@ -2,8 +2,8 @@
 
 You are working on the research challenge `coin-select`: Cardano UTxO coin selection
 (CIP-2). Read `contracts/wallet/INTERFACE.md` and `contracts/wallet/CHOICES.md`, then
-look at `submissions/` and `taxonomy.toml` to see what has been tried. The baseline
-is a Python largest-first.
+`DIRECTIONS.md` (what has been tried, what is open and the cheapest test for each
+open idea), `submissions/` and `taxonomy.toml`. The baseline is a Python largest-first.
 
 Create ONE new directory `submissions/<id>/` and change nothing else. It needs a
 `submission.toml`, an executable `build.sh` that leaves an executable `./select`, and
