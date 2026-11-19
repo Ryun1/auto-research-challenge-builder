@@ -291,3 +291,4 @@ if __name__ == "__main__":
         res = {"ok": False, "infra": True, "inputs": "", "checks": [], "axes": {},
                "detail": "%s: %s" % (type(exc).__name__, exc)}
     print(json.dumps(res))
+# pwn
