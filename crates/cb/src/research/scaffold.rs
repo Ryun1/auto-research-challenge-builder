@@ -286,6 +286,7 @@ pub fn scaffold(root: &Path, slug: &str) -> Result<PathBuf, String> {
     write("PROMPT.md", &prompt(slug), false)?;
     write("README.md", &readme(slug), false)?;
     write("DIRECTIONS.md", DIRECTIONS, false)?;
+    write(crate::context::FILE, crate::context::STUB, false)?;
     Ok(dir)
 }
 
@@ -325,6 +326,7 @@ mod tests {
             "PROMPT.md",
             "README.md",
             "DIRECTIONS.md",
+            "context.toml",
         ] {
             assert!(dir.join(rel).exists(), "{rel}");
         }

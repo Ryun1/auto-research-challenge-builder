@@ -4,7 +4,8 @@
 //! Public although the repo is private, so it carries only what the feeds
 //! already expose (results.jsonl), `challenge.toml` metadata, a short README
 //! excerpt, the steps from SUBMITTING.md, the participant prompt (PROMPT.md,
-//! written to be published) and a candidate's title. Nothing else
+//! written to be published), the challenge's context.toml (also written to be
+//! published, #101) and a candidate's title. Nothing else
 //! from `candidates/` is read. The page renders every string with
 //! `textContent`; the data is embedded as JSON with `<`, `>` and `&` escaped,
 //! so no file content can close the script element.
@@ -302,6 +303,19 @@ fn patch(
     Some(cap_patch(text))
 }
 
+/// The challenge's `context.toml`, if any. A broken one leaves the context
+/// off the page rather than the whole challenge (preflight and the tests fail
+/// on it before it gets here).
+fn context(dir: &Path, slug: &str) -> Value {
+    match crate::context::Context::load(dir) {
+        Ok(c) => json!(c),
+        Err(e) => {
+            eprintln!("site: {slug}: no context section: {e}");
+            Value::Null
+        }
+    }
+}
+
 /// One challenge's public summary. `has_feed`: a feed was written for it.
 /// The diffs of its scored submissions go into `patches` as (path, text).
 pub fn challenge(
@@ -408,6 +422,7 @@ pub fn challenge(
         "attempts": attempts,
         "submit_steps": submit_steps(&dir),
         "prompt": prompt(&dir),
+        "context": context(&dir, slug),
         "feed": has_feed.then(|| format!("feeds/{slug}.json")),
     }))
 }
@@ -561,6 +576,7 @@ fn research_challenge(
     entry.insert("type".into(), json!("research"));
     entry.insert("submit_steps".into(), json!(submit_steps(&dir)));
     entry.insert("prompt".into(), json!(prompt(&dir)));
+    entry.insert("context".into(), context(&dir, slug));
     entry.insert(
         "feed".into(),
         json!(has_feed.then(|| format!("feeds/{slug}.json"))),

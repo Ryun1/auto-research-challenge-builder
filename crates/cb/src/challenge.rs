@@ -443,6 +443,7 @@ pub fn scaffold(
     write("challenge.toml", &spec, false)?;
     write("THREAT_MODEL.md", THREAT_MODEL, false)?;
     write("SUBMITTING.md", &submitting(slug), false)?;
+    write(crate::context::FILE, crate::context::STUB, false)?;
     if kit.is_some() {
         return Ok(dir); // the kit ships setup, build, verifier, bench, baseline, broken
     }
@@ -509,6 +510,7 @@ mod tests {
             for rel in [
                 "THREAT_MODEL.md",
                 "SUBMITTING.md",
+                "context.toml",
                 "verifier/run",
                 "bench/run",
                 "baseline",

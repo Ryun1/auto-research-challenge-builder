@@ -650,6 +650,12 @@ pub fn run_all(dir: &Path) -> Result<Report, String> {
         },
     }
 
+    match crate::context::Context::load(dir) {
+        Ok(Some(_)) => r.push("context", Status::Pass, "context.toml loads"),
+        Ok(None) => r.push("context", Status::Pass, "none (context.toml is optional)"),
+        Err(e) => r.push("context", Status::Fail, e),
+    }
+
     // Path policy works on this machine's git.
     match policy::self_test(editable) {
         Ok(()) => r.push(
