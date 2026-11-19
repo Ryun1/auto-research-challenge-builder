@@ -170,6 +170,14 @@ enum Command {
         #[arg(long)]
         at: String,
     },
+    /// Run a participant command under limits (CB_LIMITS, CB_SANDBOX) and measure it
+    Participant {
+        /// Write the measurement report (JSON) here
+        #[arg(long)]
+        report: Option<PathBuf>,
+        #[arg(last = true, required = true)]
+        cmd: Vec<String>,
+    },
     /// Score candidates against the rubric
     Rank {
         #[arg(long, default_value = "candidates")]
@@ -184,6 +192,26 @@ fn main() -> ExitCode {
             url,
             out,
         } => import(&benchmark_json, &url, &out),
+        Command::Participant { report, cmd } => {
+            let sandbox = std::env::var("CB_SANDBOX").is_ok_and(|v| v == "1");
+            let limits = research::participant::limits_from_env();
+            match research::participant::run(&cmd, &limits, sandbox) {
+                Ok(r) => {
+                    if let Some(p) = report {
+                        let text = serde_json::to_string_pretty(&r).unwrap();
+                        if let Err(e) = std::fs::write(&p, text + "\n") {
+                            eprintln!("cb: write {}: {e}", p.display());
+                            std::process::exit(125);
+                        }
+                    }
+                    std::process::exit(research::participant::exit_code(&r));
+                }
+                Err(e) => {
+                    eprintln!("cb: {e}");
+                    std::process::exit(125);
+                }
+            }
+        }
         Command::Rank { dir } => candidate::rank(&dir).map(|table| print!("{table}")),
         Command::New {
             slug,

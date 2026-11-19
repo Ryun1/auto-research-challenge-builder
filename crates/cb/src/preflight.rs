@@ -209,7 +209,7 @@ pub(crate) fn build_sandbox_available() -> bool {
 }
 
 /// Single-quotes a string for bash.
-fn sq(s: &str) -> String {
+pub(crate) fn sq(s: &str) -> String {
     format!("'{}'", s.replace('\'', "'\\''"))
 }
 
@@ -272,7 +272,7 @@ pub(crate) fn build_script(
 }
 
 /// True if CI credentials or secrets: never handed to challenge commands.
-fn secret_var(k: &str) -> bool {
+pub(crate) fn secret_var(k: &str) -> bool {
     k.starts_with("ACTIONS_")
         || k.contains("TOKEN")
         || k.starts_with("GITHUB_")
