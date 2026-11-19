@@ -42,7 +42,10 @@ indexed in [docs/](docs/README.md).
 challenge has a `SUBMITTING.md` for participants and a `THREAT_MODEL.md`
 covering how a wrong answer might pass the verifier. Research challenges also
 have a `DIRECTIONS.md`, kept by the maintainer: what has been tried and what is
-open.
+open. An optional `context.toml` says why the problem matters (the system
+around it, how often it runs, what an improvement is worth, sources); it is
+published on the site, so write it to be public. `cb new` writes a commented
+stub.
 
 Results are published at https://ryun1.github.io/auto-research-challenges/,
 with a feed per challenge at `feeds/<slug>.json`.

@@ -245,6 +245,11 @@ pub fn run_all(dir: &Path) -> Result<Report, String> {
             g => r.push("threat model", Status::Fail, g.join("; ")),
         },
     }
+    match crate::context::Context::load(dir) {
+        Ok(Some(_)) => r.push("context", Status::Pass, "context.toml loads"),
+        Ok(None) => r.push("context", Status::Pass, "none (context.toml is optional)"),
+        Err(e) => r.push("context", Status::Fail, e),
+    }
     contracts_check(&mut r, dir, &spec);
     taxonomy_check(&mut r, dir, &spec);
     sandbox_check(&mut r, dir, &spec, seed_a)?;

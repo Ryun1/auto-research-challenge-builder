@@ -4,6 +4,7 @@ use std::process::ExitCode;
 
 mod candidate;
 mod challenge;
+mod context;
 mod feed;
 mod haskellpolicy;
 mod pages;
