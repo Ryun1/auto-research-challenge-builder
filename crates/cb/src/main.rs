@@ -11,6 +11,7 @@ mod paths;
 mod pipeline;
 mod policy;
 mod preflight;
+mod research;
 mod rubric;
 mod rustpolicy;
 mod site;
