@@ -22,6 +22,9 @@ pub struct ResearchSpec {
     pub properties: Vec<Property>,
     pub axes: Vec<Axis>,
     pub taxonomy: TaxonomyRef,
+    /// External reference points shown on the site (#102).
+    #[serde(default)]
+    pub targets: Vec<crate::targets::Target>,
     #[serde(skip)]
     pub tax: Taxonomy,
 }
@@ -328,6 +331,11 @@ impl ResearchSpec {
         }
         if !canon(&self.taxonomy.file) {
             return Err("taxonomy.file: relative, no . or .. components".into());
+        }
+        let axes: Vec<&str> = self.axes.iter().map(|a| a.id.as_str()).collect();
+        let problems = crate::targets::check(&self.targets, &crate::targets::Kind::Research(&axes));
+        if !problems.is_empty() {
+            return Err(problems.join("; "));
         }
         Ok(())
     }

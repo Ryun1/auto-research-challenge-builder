@@ -61,6 +61,16 @@ tolerance = 0.0
 
 [taxonomy]
 file = "taxonomy.toml"
+
+# External reference points shown on the site, never ranked (#102). Optional.
+# [[targets]]
+# id         = "other-impl"
+# label      = "Another implementation"
+# source     = "a citation, or the run that measured it here"
+# status     = "measured-here"  # measured-here | reported | derived | composite
+# comparable = "comparable"     # exact | comparable | different
+# values     = {{ time_ms = 1.0 }}  # by axis id, any subset
+# note       = "what makes it comparable or not"
 "#
     )
 }
