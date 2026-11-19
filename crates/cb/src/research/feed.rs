@@ -3,20 +3,13 @@
 
 use super::results::accepted;
 use super::spec::ResearchSpec;
+use super::util::{clip, str_of};
 use crate::pipeline::read_results;
 use serde_json::{json, Map, Value};
 use std::collections::BTreeMap;
 use std::path::Path;
 
 pub const FEED_SCHEMA_VERSION: u32 = 2;
-
-fn clip(s: &str, max: usize) -> String {
-    s.chars().take(max).collect()
-}
-
-fn str_of(v: &Value) -> &str {
-    v.as_str().unwrap_or("")
-}
 
 fn claims(v: &Value) -> Value {
     let list = v
@@ -129,16 +122,14 @@ pub fn feed(root: &Path, slug: &str, url: &str, generated_at: &str) -> Result<Va
         })
         .collect();
 
-    let count = |status: &str| {
+    // Attempts are PR-stage rows (one per submitted PR measurement); accept
+    // rows re-measure the same submission, so they are not counted again.
+    let pr = |status: Option<&str>| {
         results
             .iter()
-            .filter(|r| r["status"].as_str() == Some(status))
+            .filter(|r| r["stage"] == "pr" && status.is_none_or(|s| r["status"] == s))
             .count()
     };
-    let valid = results
-        .iter()
-        .filter(|r| r["stage"] == "pr" && r["status"] == "valid")
-        .count();
 
     let mut out = Map::new();
     out.insert("feed_schema_version".into(), json!(FEED_SCHEMA_VERSION));
@@ -184,8 +175,8 @@ pub fn feed(root: &Path, slug: &str, url: &str, generated_at: &str) -> Result<Va
     out.insert("directions".into(), Value::Array(directions));
     out.insert(
         "attempts".into(),
-        json!({"total": results.len(), "valid": valid, "accepted": acc.len(),
-               "rejected": count("rejected"), "infra_failed": count("infra_failed")}),
+        json!({"total": pr(None), "valid": pr(Some("valid")), "accepted": acc.len(),
+               "rejected": pr(Some("rejected")), "infra_failed": pr(Some("infra_failed"))}),
     );
     Ok(Value::Object(out))
 }
@@ -294,6 +285,26 @@ mod tests {
                 None,
                 "novel",
             ),
+            row(
+                "pr",
+                "rejected",
+                "e",
+                "2026-01-08T00:00:00Z",
+                "new",
+                "eps",
+                None,
+                "other",
+            ),
+            row(
+                "pr",
+                "infra_failed",
+                "f",
+                "2026-01-09T00:00:00Z",
+                "new",
+                "zeta",
+                None,
+                "other",
+            ),
         ];
         let body: String = rows.iter().map(|r| format!("{r}\n")).collect();
         std::fs::write(root.join("t/results.jsonl"), body).unwrap();
@@ -328,7 +339,7 @@ mod tests {
         assert_eq!(get("novel")["proposed"], true);
         assert_eq!(
             f["attempts"],
-            json!({"total": 7, "valid": 2, "accepted": 3, "rejected": 1, "infra_failed": 0})
+            json!({"total": 4, "valid": 2, "accepted": 3, "rejected": 1, "infra_failed": 1})
         );
         assert!(f["contracts"]
             .as_array()

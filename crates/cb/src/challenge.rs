@@ -145,7 +145,7 @@ impl Spec {
         let path = dir.join("challenge.toml");
         if challenge_type(dir)? == "research" {
             return Err(format!(
-                "{}: a research challenge (type = \"research\"): use load_any",
+                "{}: a research challenge (type = \"research\"): this command is for simple challenges",
                 path.display()
             ));
         }
@@ -265,14 +265,6 @@ impl Spec {
     }
 }
 
-/// A loaded challenge of either type.
-#[derive(Debug)]
-#[allow(dead_code)] // consumers arrive with the research commands
-pub enum Kind {
-    Simple(Spec),
-    Research(crate::research::spec::ResearchSpec),
-}
-
 /// Reads only `[challenge].type` (default `"simple"`).
 pub fn challenge_type(dir: &Path) -> Result<String, String> {
     let path = dir.join("challenge.toml");
@@ -286,18 +278,6 @@ pub fn challenge_type(dir: &Path) -> Result<String, String> {
         Some(_) => Err(format!(
             "{}: challenge.type must be a string",
             path.display()
-        )),
-    }
-}
-
-#[allow(dead_code)]
-pub fn load_any(dir: &Path) -> Result<Kind, String> {
-    match challenge_type(dir)?.as_str() {
-        "simple" => Spec::load(dir).map(Kind::Simple),
-        "research" => crate::research::spec::ResearchSpec::load(dir).map(Kind::Research),
-        t => Err(format!(
-            "{}: type {t:?}: expected \"simple\" or \"research\"",
-            dir.join("challenge.toml").display()
         )),
     }
 }
@@ -571,7 +551,7 @@ mod tests {
         std::fs::write(dir.join("challenge.toml"), &typed).unwrap();
         assert_eq!(challenge_type(&dir).unwrap(), "research");
         let e = Spec::load(&dir).unwrap_err();
-        assert!(e.contains("use load_any"), "{e}");
+        assert!(e.contains("this command is for simple challenges"), "{e}");
     }
 
     #[test]

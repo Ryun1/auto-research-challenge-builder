@@ -10,3 +10,4 @@ pub mod scaffold;
 pub mod spec;
 #[cfg(test)]
 pub mod testkit;
+pub mod util;

@@ -3,6 +3,7 @@
 
 use super::results::{accepted, direction_of};
 use super::spec::{Declaration, ResearchSpec};
+use super::util::{median, verdicts};
 use crate::pipeline::{read_results, Attempt};
 use serde_json::{json, Map, Value};
 use std::path::Path;
@@ -18,20 +19,6 @@ fn reason_of(run: &Value) -> String {
     run["reason"].as_str().unwrap_or("").to_string()
 }
 
-fn verdicts(run: &Value) -> Vec<(String, bool)> {
-    run["checks"]
-        .as_array()
-        .into_iter()
-        .flatten()
-        .map(|c| {
-            (
-                c["property"].as_str().unwrap_or("").to_string(),
-                c["ok"].as_bool().unwrap_or(false),
-            )
-        })
-        .collect()
-}
-
 /// Median, min, max, n over the samples of `axis` in every run.
 fn combine(runs: &[Value], axis: &str) -> Option<Value> {
     let mut xs: Vec<f64> = runs
@@ -45,12 +32,7 @@ fn combine(runs: &[Value], axis: &str) -> Option<Value> {
     }
     xs.sort_by(|a, b| a.total_cmp(b));
     let n = xs.len();
-    let median = if n % 2 == 1 {
-        xs[n / 2]
-    } else {
-        (xs[n / 2 - 1] + xs[n / 2]) / 2.0
-    };
-    Some(json!({"median": median, "min": xs[0], "max": xs[n - 1], "n": n}))
+    Some(json!({"median": median(&xs), "min": xs[0], "max": xs[n - 1], "n": n}))
 }
 
 /// Why two accept/baseline runs are not equivalent, if they are not.

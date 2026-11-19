@@ -4,20 +4,19 @@
 
 use super::measure::{measure, Source};
 use super::spec::{Declaration, ResearchSpec};
+use super::util::{copy_challenge, str_of, verdicts};
 use crate::challenge::BuildSandbox;
-use crate::paths;
 use crate::preflight::{self, Mode, Report, Status};
 use crate::rubric::HOSTED;
 use serde_json::Value;
 use std::collections::BTreeMap;
 use std::os::unix::fs::PermissionsExt;
-use std::path::{Path, PathBuf};
-use std::process::Command;
+use std::path::Path;
 
 const REQUIRED: [&str; 4] = ["off-by-one", "partial", "constant", "self-report"];
 
-fn str_of(v: &Value, k: &str) -> String {
-    v[k].as_str().unwrap_or("").to_string()
+fn field(v: &Value, k: &str) -> String {
+    str_of(&v[k]).to_string()
 }
 
 fn valid(m: &Value) -> bool {
@@ -26,16 +25,7 @@ fn valid(m: &Value) -> bool {
 
 /// `"status: reason"` for a measurement.
 fn why(m: &Value) -> String {
-    format!("{}: {}", str_of(m, "status"), str_of(m, "reason"))
-}
-
-fn verdicts(m: &Value) -> Vec<(String, bool)> {
-    m["checks"]
-        .as_array()
-        .into_iter()
-        .flatten()
-        .map(|c| (str_of(c, "property"), c["ok"].as_bool().unwrap_or(false)))
-        .collect()
+    format!("{}: {}", field(m, "status"), field(m, "reason"))
 }
 
 fn median_of(m: &Value, axis: &str) -> Option<f64> {
@@ -156,21 +146,6 @@ fn taxonomy_check(r: &mut Report, dir: &Path, spec: &ResearchSpec) {
     } else {
         r.push("taxonomy", Status::Fail, bad.join("; "));
     }
-}
-
-fn copy_challenge(dir: &Path, tag: &str) -> Result<PathBuf, String> {
-    let ws = paths::scratch(tag);
-    let st = Command::new("cp")
-        .arg("-R")
-        .arg(dir)
-        .arg(&ws)
-        .status()
-        .map_err(|e| e.to_string())?;
-    if !st.success() {
-        return Err("copying the challenge".into());
-    }
-    let _ = std::fs::remove_dir_all(ws.join("target"));
-    Ok(ws)
 }
 
 fn sandbox_check(r: &mut Report, dir: &Path, spec: &ResearchSpec, seed: u64) -> Result<(), String> {
@@ -445,14 +420,14 @@ pub fn run_all(dir: &Path) -> Result<Report, String> {
         };
         if v["build"]["ok"] != true
             && v["status"] == "rejected"
-            && str_of(&v, "reason").starts_with("build")
+            && field(&v, "reason").starts_with("build")
         {
             r.push(
                 &label,
                 Status::Fail,
                 format!(
                     "does not build, so it doesn't test the judge ({})",
-                    str_of(&v, "reason")
+                    field(&v, "reason")
                 ),
             );
         } else if v["status"] == "rejected" && v["build"]["ok"] != true {
@@ -461,7 +436,7 @@ pub fn run_all(dir: &Path) -> Result<Report, String> {
                 Status::Fail,
                 format!(
                     "rejected before the judge ran ({}), so it doesn't test the judge",
-                    str_of(&v, "reason")
+                    field(&v, "reason")
                 ),
             );
         } else if name == "self-report" {
@@ -502,16 +477,16 @@ pub fn run_all(dir: &Path) -> Result<Report, String> {
                 r.push(&label, Status::Fail, off.join("; "));
             }
         } else {
-            match str_of(&v, "status").as_str() {
+            match field(&v, "status").as_str() {
                 "rejected" => r.push(
                     &label,
                     Status::Pass,
-                    format!("rejected: {}", str_of(&v, "reason")),
+                    format!("rejected: {}", field(&v, "reason")),
                 ),
                 "infra_failed" => r.push(
                     &label,
                     Status::Fail,
-                    format!("infra_failed: {}", str_of(&v, "reason")),
+                    format!("infra_failed: {}", field(&v, "reason")),
                 ),
                 _ => r.push(
                     &label,

@@ -2,8 +2,6 @@
 //! taxonomy, and per-submission declarations (`submission.toml`).
 //! See docs/superpowers/specs/2026-11-19-research-challenges-design.md §1-§2.
 
-#![allow(dead_code)] // consumers arrive with later research commands
-
 use crate::challenge::is_slug;
 use crate::paths;
 use serde::{Deserialize, Serialize};
@@ -62,6 +60,13 @@ pub struct Limits {
     pub processes: u64,
     pub file_mib: u64,
     pub wall_secs: u64,
+    /// Time limit for the (untrusted) submission build.
+    #[serde(default = "default_build_secs")]
+    pub build_secs: u64,
+}
+
+fn default_build_secs() -> u64 {
+    1800
 }
 
 impl Default for Limits {
@@ -72,6 +77,7 @@ impl Default for Limits {
             processes: 32,
             file_mib: 64,
             wall_secs: 120,
+            build_secs: default_build_secs(),
         }
     }
 }
@@ -193,6 +199,7 @@ impl ResearchSpec {
             ("processes", l.processes),
             ("file_mib", l.file_mib),
             ("wall_secs", l.wall_secs),
+            ("build_secs", l.build_secs),
         ] {
             if v == 0 {
                 return Err(format!("limits.{name} must be > 0"));
@@ -342,6 +349,7 @@ impl ResearchSpec {
             "processes": self.limits.processes,
             "file_mib": self.limits.file_mib,
             "wall_secs": self.limits.wall_secs,
+            "build_secs": self.limits.build_secs,
         })
     }
 }
@@ -639,6 +647,7 @@ claims = [ { property = "change-privacy", argument = "because" } ]
         assert_eq!(s.axes_for("wallet-multiasset@0").len(), 1);
         assert_eq!(s.properties_for("wallet@1").len(), 2);
         assert_eq!(s.limits_json()["cpu_secs"], 60);
+        assert_eq!(s.limits_json()["build_secs"], 1800);
         assert!(Taxonomy::parse(TAX).is_ok());
     }
 

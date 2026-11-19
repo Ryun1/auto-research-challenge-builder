@@ -286,6 +286,17 @@ pub(crate) fn run_mode(
     cmd: &str,
     seed: u64,
 ) -> Run {
+    run_mode_timeout(mode, env, dir, cmd, seed, TIMEOUT)
+}
+
+pub(crate) fn run_mode_timeout(
+    mode: Mode,
+    env: &[(String, String)],
+    dir: &Path,
+    cmd: &str,
+    seed: u64,
+    timeout: Duration,
+) -> Run {
     let start = Instant::now();
     let seed_env = ("CB_SEED".to_string(), seed.to_string());
     if let Mode::Build(b) = &mode {
@@ -414,7 +425,7 @@ pub(crate) fn run_mode(
     let status = loop {
         match child.try_wait() {
             Ok(Some(status)) => break status,
-            Ok(None) if start.elapsed() > TIMEOUT => {
+            Ok(None) if start.elapsed() > timeout => {
                 let _ = child.kill();
                 let _ = child.wait();
                 // Not joined: a surviving grandchild may hold the pipes open.

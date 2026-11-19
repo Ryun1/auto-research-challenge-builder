@@ -2,12 +2,13 @@
 //! judge n times (design spec §4).
 
 use super::spec::{Declaration, ResearchSpec};
+use super::util::{clip, copy_challenge, median};
 use crate::challenge::BuildSandbox;
-use crate::paths;
 use crate::preflight::{self, Mode};
 use serde_json::{json, Map, Value};
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::time::Duration;
 
 pub enum Source<'a> {
     /// A gate export dir (`<dir>/<root name>/<slug>/submissions/<id>`).
@@ -25,10 +26,6 @@ impl Drop for Guard {
     fn drop(&mut self) {
         let _ = std::fs::remove_dir_all(&self.0);
     }
-}
-
-fn cap(s: &str, n: usize) -> String {
-    s.chars().take(n).collect()
 }
 
 fn finish(mut m: Value, status: &str, reason: &str) -> Result<Value, String> {
@@ -55,15 +52,6 @@ fn one_dir(dir: &Path) -> Result<String, String> {
     }
 }
 
-fn median(sorted: &[f64]) -> f64 {
-    let n = sorted.len();
-    if n % 2 == 1 {
-        sorted[n / 2]
-    } else {
-        (sorted[n / 2 - 1] + sorted[n / 2]) / 2.0
-    }
-}
-
 pub fn measure(
     root: &Path,
     slug: &str,
@@ -73,18 +61,8 @@ pub fn measure(
 ) -> Result<Value, String> {
     let dir = root.join(slug);
     let spec = ResearchSpec::load(&dir)?;
-    let ws = paths::scratch(&format!("measure-{slug}"));
+    let ws = copy_challenge(&dir, &format!("measure-{slug}"))?;
     let _guard = Guard(ws.clone());
-    let st = Command::new("cp")
-        .arg("-R")
-        .arg(&dir)
-        .arg(&ws)
-        .status()
-        .map_err(|e| e.to_string())?;
-    if !st.success() {
-        return Err("copying the challenge".into());
-    }
-    let _ = std::fs::remove_dir_all(ws.join("target"));
     let subs = ws.join("submissions");
     std::fs::create_dir_all(&subs).map_err(|e| e.to_string())?;
     let id = match source {
@@ -148,11 +126,12 @@ pub fn measure(
         return finish(
             m,
             "infra_failed",
-            &format!("setup: {}", cap(&r.detail, 300)),
+            &format!("setup: {}", clip(&r.detail, 300)),
         );
     }
 
     // Build.
+    let build_timeout = Duration::from_secs(spec.limits.build_secs);
     let b = if sandbox {
         if !preflight::build_sandbox_available() {
             return finish(
@@ -165,19 +144,24 @@ pub fn measure(
             writable: spec.submissions.writable.clone(),
             outputs: vec![format!("submissions/{id}")],
         };
-        preflight::run_mode(
+        preflight::run_mode_timeout(
             Mode::Build(&bs),
             &[],
             &ws,
             &format!("cd submissions/{id} && ./build.sh"),
             0,
+            build_timeout,
         )
     } else {
-        preflight::run_in(false, &[], &sub, "./build.sh", 0)
+        preflight::run_mode_timeout(Mode::Plain, &[], &sub, "./build.sh", 0, build_timeout)
     };
     m["build"] = json!({"ok": b.ok, "secs": b.secs});
     if !b.ok {
-        return finish(m, "rejected", &format!("build: {}", cap(&b.detail, 300)));
+        if b.detail == "timed out" {
+            let why = format!("build: timed out after {} s", spec.limits.build_secs);
+            return finish(m, "rejected", &why);
+        }
+        return finish(m, "rejected", &format!("build: {}", clip(&b.detail, 300)));
     }
     let _ = Command::new("chmod").args(["-R", "a+rX"]).arg(&ws).status();
     let seed = seed_override.unwrap_or_else(preflight::seed);
@@ -216,7 +200,7 @@ pub fn measure(
         let r = preflight::run_in(false, &env, &ws, &cmd, seed);
         judge_secs += r.secs;
         m["judge_secs"] = json!(judge_secs);
-        let infra = |m: Value, why: &str| finish(m, "infra_failed", &cap(why, 300));
+        let infra = |m: Value, why: &str| finish(m, "infra_failed", &clip(why, 300));
         if r.stdout.len() > JUDGE_CAP {
             return infra(m, "judge output over 64 KiB");
         }
@@ -243,7 +227,7 @@ pub fn measure(
                 return infra(m, &format!("judge check for unknown property {pid:?}"));
             };
             let ok = c.get("ok").and_then(Value::as_bool).unwrap_or(false);
-            let detail = cap(c.get("detail").and_then(Value::as_str).unwrap_or(""), 300);
+            let detail = clip(c.get("detail").and_then(Value::as_str).unwrap_or(""), 300);
             if !ok && first_fail.is_none() {
                 first_fail = Some(format!("check {pid}: {detail}"));
             }
@@ -328,6 +312,7 @@ fn place(from: &Path, to: &Path) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::paths;
     use crate::research::testkit::{toy, GOOD_JUDGE};
 
     fn tmp(tag: &str) -> PathBuf {
@@ -367,6 +352,23 @@ mod tests {
         let v = measure(&root, "toy", Source::Id("baseline"), false, None).unwrap();
         assert_eq!(v["status"], "rejected");
         assert!(reason(&v).starts_with("build:"), "{v}");
+    }
+
+    #[test]
+    fn build_timeout_rejected() {
+        let root = tmp("buildto");
+        let dir = toy(&root, "toy", GOOD_JUDGE);
+        let p = dir.join("challenge.toml");
+        let t = std::fs::read_to_string(&p).unwrap();
+        std::fs::write(&p, t.replace("wall_secs", "build_secs = 1\nwall_secs")).unwrap();
+        std::fs::write(
+            dir.join("submissions/baseline/build.sh"),
+            "#!/bin/sh\nsleep 5\n",
+        )
+        .unwrap();
+        let v = measure(&root, "toy", Source::Id("baseline"), false, None).unwrap();
+        assert_eq!(v["status"], "rejected", "{v}");
+        assert_eq!(reason(&v), "build: timed out after 1 s");
     }
 
     #[test]
