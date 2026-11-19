@@ -22,7 +22,6 @@ pub fn accepted(results: &[Value]) -> BTreeMap<String, Value> {
         .collect()
 }
 
-#[allow(dead_code)] // used by the accept/record steps
 /// The direction recorded on `id`'s latest accept/baseline row.
 pub fn direction_of(results: &[Value], id: &str) -> Option<String> {
     results

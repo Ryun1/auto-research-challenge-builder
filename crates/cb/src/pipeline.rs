@@ -726,7 +726,7 @@ pub fn record_commit(root: &Path, slug: &str) -> Result<Option<String>, String> 
 // ---- comment ----
 
 /// Neutralises markdown/HTML in untrusted text for a PR comment.
-fn md(s: &str) -> String {
+pub(crate) fn md(s: &str) -> String {
     s.chars()
         .take(300)
         .map(|c| match c {
@@ -746,6 +746,9 @@ pub fn comment(gate: &Value, claim: Option<&Value>, entry: Option<&Value>) -> St
             out += &format!("- {}\n", md(e.as_str().unwrap_or("?")));
         }
         return out;
+    }
+    if gate["type"] == "research" {
+        return crate::research::comment::comment(gate, claim, entry);
     }
     let slug = md(gate["slug"].as_str().unwrap_or("?"));
     out += &format!("Challenge: `{slug}`\n\n");

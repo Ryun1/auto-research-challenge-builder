@@ -132,9 +132,12 @@ enum Command {
         slug: String,
         #[arg(long, default_value = "challenges")]
         root: PathBuf,
-        /// baseline | promotion | pr
+        /// simple: baseline | promotion | pr; research: pr | accept | baseline
         #[arg(long)]
         stage: String,
+        /// Research only: the submission.toml (default: from the challenge dir)
+        #[arg(long)]
+        declaration: Option<PathBuf>,
         /// Score claims: two for baseline/promotion, one for pr
         #[arg(long = "run", required = true)]
         runs: Vec<PathBuf>,
@@ -359,12 +362,36 @@ fn main() -> ExitCode {
             slug,
             root,
             stage,
+            declaration,
             runs,
             commit,
             by,
             model,
             at,
         } => {
+            let research = match challenge::challenge_type(&root.join(&slug)) {
+                Ok(t) => t == "research",
+                Err(e) => return fail(&e),
+            };
+            if research {
+                if !matches!(stage.as_str(), "pr" | "accept" | "baseline") {
+                    return fail("stage: pr, accept or baseline");
+                }
+                let a = pipeline::Attempt {
+                    stage: &stage,
+                    commit: &commit,
+                    by: &by,
+                    model: &model,
+                    at: &at,
+                };
+                return match record_research(&root, &slug, declaration.as_deref(), &runs, &a) {
+                    Ok(()) => ExitCode::SUCCESS,
+                    Err(e) => fail(&e),
+                };
+            }
+            if declaration.is_some() {
+                return fail("--declaration is for research challenges");
+            }
             if !matches!(stage.as_str(), "baseline" | "promotion" | "pr") {
                 return fail("stage: baseline, promotion or pr");
             }
@@ -413,6 +440,40 @@ fn main() -> ExitCode {
             ExitCode::FAILURE
         }
     }
+}
+
+fn record_research(
+    root: &std::path::Path,
+    slug: &str,
+    declaration: Option<&std::path::Path>,
+    runs: &[PathBuf],
+    a: &pipeline::Attempt,
+) -> Result<(), String> {
+    let runs = runs
+        .iter()
+        .map(|p| pipeline::read_claim(p))
+        .collect::<Result<Vec<_>, _>>()?;
+    let path = match declaration {
+        Some(p) => p.to_path_buf(),
+        None => {
+            let id = runs[0]["submission"].as_str().unwrap_or("");
+            if !challenge::is_slug(id) {
+                return Err(format!("run submission {id:?} is not a slug"));
+            }
+            root.join(slug)
+                .join("submissions")
+                .join(id)
+                .join("submission.toml")
+        }
+    };
+    let text = std::fs::read_to_string(&path).map_err(|e| format!("{}: {e}", path.display()))?;
+    let decl = research::spec::Declaration::parse(&text)?;
+    let entry = research::record::record(root, slug, &decl, &runs, a)?;
+    println!(
+        "{}",
+        serde_json::json!({"entry": entry, "submission": decl.id})
+    );
+    Ok(())
 }
 
 fn fail(msg: &str) -> ExitCode {
