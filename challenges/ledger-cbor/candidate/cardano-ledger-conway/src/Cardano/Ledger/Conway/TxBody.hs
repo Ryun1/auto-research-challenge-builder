@@ -66,7 +66,8 @@ import Cardano.Ledger.Binary (
   EncCBOR (..),
   Sized (..),
   ToCBOR (..),
-  decodeBreakOr,
+  decodeFoldStateIndef,
+  decodeFoldStateN,
   decodeMapLenOrIndef,
   decodeWord,
   mkSized,
@@ -197,21 +198,20 @@ instance Typeable l => DecCBOR (ConwayTxBodyRaw l ConwayEra) where
 decodeConwayTxBodyRaw :: Decoder s (ConwayTxBodyRaw TopTx ConwayEra)
 decodeConwayTxBodyRaw =
   decodeMapLenOrIndef >>= \case
-    Just len -> decodeConwayTxBodyRawDefinite len basicConwayTxBodyRaw 0
-    Nothing -> decodeConwayTxBodyRawIndefinite basicConwayTxBodyRaw 0
+    Just len -> decodeFoldStateN len decodeConwayTxBodyRawStep accStart >>= accFinish
+    Nothing -> decodeFoldStateIndef decodeConwayTxBodyRawStep accStart >>= accFinish
+  where
+    accStart = ConwayTxBodyRawAcc basicConwayTxBodyRaw 0
+    accFinish (ConwayTxBodyRawAcc tx seenKeys) = finishConwayTxBodyRaw tx seenKeys
 
-decodeConwayTxBodyRawDefinite ::
-  Int -> ConwayTxBodyRaw TopTx ConwayEra -> Word64 -> Decoder s (ConwayTxBodyRaw TopTx ConwayEra)
-decodeConwayTxBodyRawDefinite 0 tx seenKeys = finishConwayTxBodyRaw tx seenKeys
-decodeConwayTxBodyRawDefinite remaining tx seenKeys =
-  decodeConwayTxBodyRawField tx seenKeys (decodeConwayTxBodyRawDefinite (remaining - 1))
+-- | The body decoded so far (rebuilt lazily, one update per key) and the keys seen.
+data ConwayTxBodyRawAcc = ConwayTxBodyRawAcc (ConwayTxBodyRaw TopTx ConwayEra) !Word64
 
-decodeConwayTxBodyRawIndefinite ::
-  ConwayTxBodyRaw TopTx ConwayEra -> Word64 -> Decoder s (ConwayTxBodyRaw TopTx ConwayEra)
-decodeConwayTxBodyRawIndefinite tx seenKeys =
-  decodeBreakOr >>= \case
-    True -> finishConwayTxBodyRaw tx seenKeys
-    False -> decodeConwayTxBodyRawField tx seenKeys decodeConwayTxBodyRawIndefinite
+-- | One key and its value: a step of the map loop.
+decodeConwayTxBodyRawStep :: ConwayTxBodyRawAcc -> Decoder s ConwayTxBodyRawAcc
+decodeConwayTxBodyRawStep (ConwayTxBodyRawAcc tx seenKeys) =
+  decodeConwayTxBodyRawField tx seenKeys (\tx' seenKeys' -> pure (ConwayTxBodyRawAcc tx' seenKeys'))
+{-# INLINE decodeConwayTxBodyRawStep #-}
 
 -- | Force the record (as @(!v, used) <- ...@ does in 'decodeSparse') and then check that
 -- the required keys 0 (inputs), 1 (outputs) and 2 (fee) were all present.

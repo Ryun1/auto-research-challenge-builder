@@ -77,6 +77,8 @@ module Cardano.Ledger.Binary.Decoding.Decoder (
   decodeStrictSeq,
   decodeSetTag,
   decodeListLikeWithCount,
+  decodeFoldStateN,
+  decodeFoldStateIndef,
   decodeListLikeWithCountT,
   decodeSetLikeEnforceNoDuplicates,
   decodeNonEmptySetLikeEnforceNoDuplicates,
@@ -1191,6 +1193,64 @@ decodeListLikeWithCount decodeLenOrIndef insert decodeElement =
                 DBail -> pure DBail
                 DOk off'' element -> goIndef (count + 1) (insert element acc) off''
 {-# INLINE decodeListLikeWithCount #-}
+
+-- | @decodeFoldStateN n step z@ runs @step@ @n@ times, each time on the state the
+-- previous run produced, starting from @z@: the same as
+--
+-- > go 0 st = pure st
+-- > go k st = step st >>= go (k - 1)
+--
+-- The state is passed on as it is (not forced). The direct form is one loop over
+-- the offset, so a `step` that is inlined here is not rebuilt as a `Decoder` per
+-- iteration.
+decodeFoldStateN :: forall s st. Int -> (st -> Decoder s st) -> st -> Decoder s st
+decodeFoldStateN n0 step z0 =
+  Decoder
+    ( \bsl v ->
+        let goC :: Int -> st -> C.Decoder s st
+            goC 0 st = pure st
+            goC k st = runDecoder (step st) bsl v >>= goC (k - 1)
+         in goC n0 z0
+    )
+    ( \v bs off0 ->
+        let goD :: Int -> st -> Int -> ST s (DRes st)
+            goD 0 st !off = pure (DOk off st)
+            goD k st !off =
+              runDirect (step st) v bs off >>= \case
+                DBail -> pure DBail
+                DOk off' st' -> goD (k - 1) st' off'
+         in goD n0 z0 off0
+    )
+{-# INLINE decodeFoldStateN #-}
+
+-- | @decodeFoldStateIndef step z@ is `decodeFoldStateN` for an indefinite-length
+-- container: before each run of @step@ it reads `decodeBreakOr`, and stops at the
+-- break. The same as
+--
+-- > go st = decodeBreakOr >>= \stop -> if stop then pure st else step st >>= go
+decodeFoldStateIndef :: forall s st. (st -> Decoder s st) -> st -> Decoder s st
+decodeFoldStateIndef step z0 =
+  Decoder
+    ( \bsl v ->
+        let goC :: st -> C.Decoder s st
+            goC st =
+              runDecoder decodeBreakOr bsl v >>= \stop ->
+                if stop then pure st else runDecoder (step st) bsl v >>= goC
+         in goC z0
+    )
+    ( \v bs off0 ->
+        let goD :: st -> Int -> ST s (DRes st)
+            goD st !off =
+              runDirect decodeBreakOr v bs off >>= \case
+                DBail -> pure DBail
+                DOk off1 True -> pure (DOk off1 st)
+                DOk off1 False ->
+                  runDirect (step st) v bs off1 >>= \case
+                    DBail -> pure DBail
+                    DOk off2 st' -> goD st' off2
+         in goD z0 off0
+    )
+{-# INLINE decodeFoldStateIndef #-}
 
 decodeListLikeWithCountT ::
   forall t s a b.
