@@ -9,8 +9,9 @@
 //!   appends to `challenges/<slug>/results.jsonl`.
 //! - `comment` (trusted): renders a score claim as a PR comment.
 
-use crate::challenge::Spec;
+use crate::challenge::{challenge_type, Spec};
 use crate::preflight::{self, host, metrics, run_in, verify_infra, verify_ok};
+use crate::research::spec::ResearchSpec;
 use crate::{haskellpolicy, paths, policy, rustpolicy};
 use serde_json::{json, Value};
 use std::path::{Path, PathBuf};
@@ -19,7 +20,7 @@ use std::process::Command;
 pub const RESULTS_SCHEMA: u32 = 1;
 const MAX_SCORE_JSON: u64 = 64 * 1024;
 
-fn git(repo: &Path, args: &[&str]) -> Result<Vec<u8>, String> {
+pub(crate) fn git(repo: &Path, args: &[&str]) -> Result<Vec<u8>, String> {
     let out = Command::new("git")
         .args(["-c", "core.quotepath=false"])
         .args(args)
@@ -36,8 +37,27 @@ fn git(repo: &Path, args: &[&str]) -> Result<Vec<u8>, String> {
     }
 }
 
-fn git_str(repo: &Path, args: &[&str]) -> Result<String, String> {
+pub(crate) fn git_str(repo: &Path, args: &[&str]) -> Result<String, String> {
     git(repo, args).map(|b| String::from_utf8_lossy(&b).trim().to_string())
+}
+
+/// Extracts `head:path` into `out` with `git archive | tar -x`. Data only:
+/// nothing in the tree is executed.
+pub(crate) fn export_tar(repo: &Path, head: &str, path: &str, out: &Path) -> Result<(), String> {
+    let tar = git(repo, &["archive", "--format=tar", head, "--", path])?;
+    std::fs::create_dir_all(out).map_err(|e| format!("{}: {e}", out.display()))?;
+    let mut child = Command::new("tar")
+        .args(["-x", "-C"])
+        .arg(out)
+        .stdin(std::process::Stdio::piped())
+        .spawn()
+        .map_err(|e| format!("tar: {e}"))?;
+    use std::io::Write;
+    let _ = child.stdin.take().map(|mut s| s.write_all(&tar));
+    if !child.wait().map(|s| s.success()).unwrap_or(false) {
+        return Err("tar extraction failed".into());
+    }
+    Ok(())
 }
 
 // ---- gate ----
@@ -47,12 +67,19 @@ pub struct Gate {
     pub slug: Option<String>,
     pub runner: Option<String>,
     pub kit: Option<String>,
+    /// `simple` or `research`, once the challenge is known.
+    pub kind: Option<String>,
+    /// Research: the single submission id the PR adds.
+    pub submission: Option<String>,
+    /// Research: the parsed `submission.toml` as JSON.
+    pub declaration: Option<Value>,
     pub errors: Vec<String>,
 }
 
 impl Gate {
     pub fn json(&self, base: &str, head: &str) -> Value {
         json!({"ok": self.errors.is_empty(), "slug": self.slug, "runner": self.runner, "kit": self.kit,
+               "type": self.kind, "submission": self.submission, "declaration": self.declaration,
                "base": base, "head": head, "errors": self.errors})
     }
 }
@@ -64,8 +91,12 @@ pub fn gate(repo: &Path, root: &str, base: &str, head: &str, out: &Path) -> Gate
         slug: None,
         runner: None,
         kit: None,
+        kind: None,
+        submission: None,
+        declaration: None,
         errors: Vec::new(),
     };
+    let caller_base = base;
     let fail = |mut g: Gate, e: String| {
         g.errors.push(e);
         g
@@ -108,12 +139,38 @@ pub fn gate(repo: &Path, root: &str, base: &str, head: &str, out: &Path) -> Gate
             )
         }
     };
-    // The spec comes from main, never from the PR.
+    // The type and spec come from main, never from the PR.
+    match challenge_type(&repo.join(root).join(&slug)) {
+        Ok(t) if t == "research" => {
+            let spec = match ResearchSpec::load(&repo.join(root).join(&slug)) {
+                Ok(s) => s,
+                Err(e) => return fail(g, e),
+            };
+            g.slug = Some(slug.clone());
+            g.runner = Some(spec.challenge.runner.clone());
+            g.kind = Some("research".into());
+            crate::research::gate::check(
+                &mut g,
+                repo,
+                root,
+                &slug,
+                &spec,
+                &base,
+                caller_base,
+                head,
+                out,
+            );
+            return g;
+        }
+        Ok(_) => {}
+        Err(e) => return fail(g, e),
+    }
     let spec = match Spec::load(&repo.join(root).join(&slug)) {
         Ok(s) => s,
         Err(e) => return fail(g, e),
     };
     g.slug = Some(slug.clone());
+    g.kind = Some("simple".into());
     g.runner = Some(spec.challenge.runner.clone());
     g.kit = spec.challenge.kit.clone();
     if spec.challenge.status != "open" {
@@ -169,24 +226,8 @@ pub fn gate(repo: &Path, root: &str, base: &str, head: &str, out: &Path) -> Gate
     // Export as data. Only regular files reach here.
     let _ = std::fs::remove_dir_all(out);
     for e in &editable {
-        let tar = match git(repo, &["archive", "--format=tar", head, "--", e]) {
-            Ok(t) => t,
-            Err(err) => return fail(g, err),
-        };
-        std::fs::create_dir_all(out).ok();
-        let mut child = match Command::new("tar")
-            .args(["-x", "-C"])
-            .arg(out)
-            .stdin(std::process::Stdio::piped())
-            .spawn()
-        {
-            Ok(c) => c,
-            Err(err) => return fail(g, format!("tar: {err}")),
-        };
-        use std::io::Write;
-        let _ = child.stdin.take().map(|mut s| s.write_all(&tar));
-        if !child.wait().map(|s| s.success()).unwrap_or(false) {
-            return fail(g, "tar extraction failed".into());
+        if let Err(err) = export_tar(repo, head, e, out) {
+            return fail(g, err);
         }
     }
     if let Some(rust) = &spec.rust {
@@ -750,7 +791,7 @@ pub(crate) mod tests {
     use super::*;
     use crate::challenge::scaffold;
 
-    fn sh(dir: &Path, script: &str) {
+    pub(crate) fn sh(dir: &Path, script: &str) {
         let ok = Command::new("bash")
             .args(["-c", &format!("set -e; export GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@t GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@t; {script}")])
             .current_dir(dir)
@@ -782,7 +823,7 @@ pub(crate) mod tests {
         dir
     }
 
-    fn head(dir: &Path, script: &str) -> String {
+    pub(crate) fn head(dir: &Path, script: &str) -> String {
         sh(
             dir,
             &format!(
