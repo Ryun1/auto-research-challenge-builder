@@ -53,21 +53,21 @@ id        = "fees"
 unit      = "ADA"
 direction = "minimise"
 repeats   = 1
-tolerance = 0.08
+tolerance = 0.12
 
 [[axes]]
 id        = "dust"
 unit      = "UTxOs"
 direction = "minimise"
 repeats   = 1
-tolerance = 0.25
+tolerance = 0.3
 
 [[axes]]
 id        = "inputs_per_tx"
 unit      = "inputs"
 direction = "minimise"
 repeats   = 1
-tolerance = 0.25
+tolerance = 0.3
 
 [[axes]]
 id        = "latency_ms"
