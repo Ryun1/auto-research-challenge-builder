@@ -137,9 +137,23 @@ jobs:
           PR: $PR
           MSG
               landed=false
+              dir="challenges/$slug/submissions/$id"
               for i in 1 2 3 4 5; do
-                if git pull -q --rebase origin main && git push -q origin HEAD:main; then landed=true; break; fi
-                git rebase --abort 2>/dev/null || true
+                if git pull -q --rebase origin main; then
+                  # The gate ran once; a same-id submission may have landed since. Only
+                  # A entries under our own dir may differ from main, and main must not
+                  # hold the dir (else our files would merge into someone else's).
+                  bad=false
+                  [ -z "$(git ls-tree origin/main -- "$dir")" ] || bad=true
+                  while IFS=$'\t' read -r st path; do
+                    [ -n "$st" ] || continue
+                    if [ "$st" != A ] || [ "${path#"$dir"/}" = "$path" ]; then bad=true; fi
+                  done < <(git diff --name-status origin/main HEAD)
+                  $bad && { echo "::error::a submission with id $id landed on main meanwhile; not pushing"; exit 1; }
+                  if git push -q origin HEAD:main; then landed=true; break; fi
+                else
+                  git rebase --abort 2>/dev/null || true
+                fi
                 sleep $((RANDOM % 10 + 3))
               done
               $landed || { echo "::error::the submission was not landed on main"; exit 1; }

@@ -21,6 +21,10 @@ on:
       submission:
         description: submission id under challenges/<slug>/submissions/ (baseline records the baseline)
         required: true
+      force:
+        description: re-measure an id that is already accepted (never removes its directory)
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -35,6 +39,7 @@ jobs:
       runner: ${{ steps.d.outputs.runner }}
       stage: ${{ steps.d.outputs.stage }}
       by: ${{ steps.d.outputs.by }}
+      remeasure: ${{ steps.d.outputs.remeasure }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -54,6 +59,19 @@ jobs:
               || { echo "::error::$slug is not a research challenge"; exit 1; }
             stage=$([ "$submission" = baseline ] && echo baseline || echo accept)
             by="$ACTOR"
+            # An accepted id is not re-measured by accident: a flaky re-run could
+            # un-accept it or delete a directory that accepted children build on.
+            remeasure=false
+            if [ -f "challenges/$slug/results.jsonl" ]; then
+              latest=$(jq -rs --arg id "$submission" \
+                '[.[] | select(.submission == $id and (.stage == "accept" or .stage == "baseline"))] | last | .status // ""' \
+                "challenges/$slug/results.jsonl")
+              if [ "$latest" = accepted ]; then
+                [ "$FORCE" = true ] \
+                  || { echo "::error::$slug/$submission is already accepted; dispatch with force to re-measure it"; exit 1; }
+                remeasure=true
+              fi
+            fi
           else
             # Only a push that adds one research submission is an attempt.
             set +e
@@ -61,14 +79,23 @@ jobs:
             set -e
             cat gate.json
             if [ "$(jq -r .ok gate.json)" != true ] || [ "$(jq -r '.type // "simple"' gate.json)" != research ]; then
+              # A Comment landing (submission: subject plus a PR trailer) that the
+              # gate now refuses must not pass silently: its dir is on main, unmeasured.
+              subj=$(git log -1 --format=%s "$AFTER")
+              prt=$(git log -1 --format='%(trailers:key=PR,valueonly)' "$AFTER" | tr -d '[:space:]')
+              if [[ "$subj" == "submission: "* ]] && [ -n "$prt" ]; then
+                echo "::error::landing $subj is on main but the gate refuses it: $(jq -c '.errors // .' gate.json)"
+                exit 1
+              fi
               echo "not a research submission"; exit 0
             fi
+            remeasure=false
             slug=$(jq -r .slug gate.json); submission=$(jq -r .submission gate.json); stage=accept
             by=$(git log -1 --format='%(trailers:key=Submitted-by,valueonly)' "$AFTER" | tr -d '[:space:]')
             by=${by:-$ACTOR}
           fi
           runner=$(sed -n 's/^runner *= *"\([^"]*\)".*/\1/p' "challenges/$slug/challenge.toml")
-          for k in slug submission runner stage by; do echo "$k=${!k}" >> "$GITHUB_OUTPUT"; done
+          for k in slug submission runner stage by remeasure; do echo "$k=${!k}" >> "$GITHUB_OUTPUT"; done
         env:
           EVENT: ${{ github.event_name }}
           SLUG_IN: ${{ inputs.slug }}
@@ -76,6 +103,7 @@ jobs:
           BEFORE: ${{ github.event.before }}
           AFTER: ${{ github.sha }}
           ACTOR: ${{ github.actor }}
+          FORCE: ${{ inputs.force }}
 
   run:
     needs: detect
@@ -84,7 +112,7 @@ jobs:
       matrix:
         n: [1, 2]
     runs-on: ${{ needs.detect.outputs.runner }}
-    timeout-minutes: 60
+    timeout-minutes: 90 # the build alone times out at [limits] build_secs (30 min), well inside this
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -114,14 +142,12 @@ jobs:
   # goes out with the `results` environment's deploy key (see comment.yml).
   record:
     needs: [detect, run]
+    # Also when a run job failed or timed out: the record then stores infra_failed.
+    if: always() && needs.detect.outputs.slug != ''
     runs-on: ubuntu-24.04
     environment: results
     timeout-minutes: 15
-    # Per challenge: records and removals for one slug are ordered; they
-    # union-merge, but a removal rebases onto the previous record.
-    concurrency:
-      group: accept-record-${{ needs.detect.outputs.slug }}
-      cancel-in-progress: false
+    # No concurrency group: a pending job is cancelled by the next one queued, which would lose records. Records are union-merged appends and a removal touches only its own dir, so the pull --rebase loop orders them.
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -136,6 +162,16 @@ jobs:
       - run: cargo build --locked --release
       - name: Decide, record, remove if rejected
         run: |
+          # A run job that failed or timed out left no measure.json: record infra_failed.
+          contract=$(sed -n 's/^contract *= *"\([^"]*\)".*/\1/p' "challenges/$SLUG/submissions/$SUB/submission.toml")
+          for n in 1 2; do
+            f="measures/measure-$n/measure.json"
+            if [ ! -f "$f" ]; then
+              mkdir -p "measures/measure-$n"
+              jq -n --arg slug "$SLUG" --arg sub "$SUB" --arg c "$contract" --arg n "$n" \
+                '{schema:2,type:"research",slug:$slug,submission:$sub,contract:$c,status:"infra_failed",reason:("measure job " + $n + " failed or timed out"),checks:[],axes:{}}' > "$f"
+            fi
+          done
           ./target/release/cb record "$SLUG" --stage "$STAGE" --run measures/measure-1/measure.json --run measures/measure-2/measure.json \
             --commit "$SHA" --by "$BY" --at "$(date -u +%FT%TZ)" > decision.json
           cat decision.json
@@ -144,7 +180,7 @@ jobs:
           git config user.email "cb-bot@users.noreply.github.com"
           git add "challenges/$SLUG/results.jsonl"
           msg="results: $SLUG $SUB $STAGE $status (${SHA::7})"
-          if [ "$STAGE" = accept ] && [ "$status" = rejected ]; then
+          if [ "$STAGE" = accept ] && [ "$status" = rejected ] && [ "$REMEASURE" != true ]; then
             git rm -rq "challenges/$SLUG/submissions/$SUB"
             msg="$msg; removed submissions/$SUB"
           fi
@@ -162,5 +198,6 @@ jobs:
           SLUG: ${{ needs.detect.outputs.slug }}
           SUB: ${{ needs.detect.outputs.submission }}
           STAGE: ${{ needs.detect.outputs.stage }}
+          REMEASURE: ${{ needs.detect.outputs.remeasure }}
           BY: ${{ needs.detect.outputs.by }}
           SHA: ${{ github.sha }}

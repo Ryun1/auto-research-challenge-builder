@@ -8,6 +8,8 @@ name: Site
 on:
   push:
     branches: [main]
+    # Landing pushes: Site runs when Accept completes (workflow_run below).
+    paths-ignore: ["challenges/*/submissions/**"]
   # The results commits from Comment, Promote and Accept carry [skip actions], so they
   # do not fire push triggers. Completions only: every run is billed minutes.
   # Not Submission: Comment follows every Submission run and fires this.
