@@ -11,8 +11,9 @@
 # the base as is: coin-select must be open on main.
 #
 # WARNING: a live research PR that passes the gate and measures valid AUTO-LANDS
-# on main (spec §6). Only `read-seed` can do that here, so it must be run live
-# only against a disposable test challenge, and needs --yes-land. The other live
+# on main (spec §6). Only `read-seed` and `persist-state` can do that here, so
+# they must be run live only against a disposable test challenge, and need
+# --yes-land. The other live
 # cases are refused at the gate or rejected at measurement. Live cases are billed
 # (a few minutes each), so they must be named. Needs a clean tracked tree; live
 # mode needs gh auth with write access.
@@ -32,6 +33,8 @@ export GIT_AUTHOR_NAME=suite GIT_AUTHOR_EMAIL=suite@invalid GIT_COMMITTER_NAME=s
 #   refused:  the gate refuses, and one of its reasons contains the substring
 #   rejected: the gate passes, measurement rejects (the comment's Status line) (live only)
 #   valid:    measurement is valid, so the PR would auto-land (live only, --yes-land)
+#             (read-seed: the seed is hidden; persist-state: no state survives between
+#             invocations: /run/lock, /var/crash, /dev/shm and SysV shm all start empty)
 #   ignored:  a PR into a branch other than main starts no Submission run and gets no comment (live only)
 CASES=(
   "edit-other-submission|refused|may only add files under"
@@ -48,6 +51,7 @@ CASES=(
   "non-main-base|ignored|"
   "network-in-build|rejected|build:"
   "read-seed|valid|"
+  "persist-state|valid|"
 )
 
 # A valid submission copied from the baseline: dir, id and direction are $1.
@@ -102,6 +106,37 @@ apply() {
         print "if _leak():"
         print "    sys.exit(1)" }' "$SUBS/baseline/select" > "$SUBS/$1/select"
       chmod 755 "$SUBS/$1/select"; git add -- "$SUBS/$1" ;;
+    persist-state)
+      # The baseline, except that on every start it looks for state left by an earlier
+      # invocation (files in /run/lock, /var/crash, /dev/shm, a SysV segment) and then
+      # leaves some. If it ever FINDS state it answers the first pay with an invalid
+      # tx, so the PR would be rejected. A sandbox that isolates these is valid.
+      helper "$1"
+      awk '{ print } /^import sys$/ && !d { d = 1
+        print "import os"
+        print "def _persist():"
+        print "    found = False"
+        print "    for d in (\"/run/lock\", \"/var/crash\", \"/dev/shm\"):"
+        print "        f = os.path.join(d, \"cb-persist-state\")"
+        print "        try:"
+        print "            found = found or os.path.exists(f)"
+        print "            open(f, \"w\").write(\"x\")"
+        print "        except OSError:"
+        print "            pass"
+        print "    try:"
+        print "        import ctypes"
+        print "        libc = ctypes.CDLL(None, use_errno=True)"
+        print "        key = 0x43425354"
+        print "        found = found or libc.shmget(key, 0, 0) >= 0"
+        print "        libc.shmget(key, 4096, 0o1000 | 0o666)"
+        print "    except Exception:"
+        print "        pass"
+        print "    return found"
+        print "if _persist():"
+        print "    sys.stdout.write(\"{\\\"inputs\\\":[],\\\"change\\\":[],\\\"fee\\\":0}\\n\")"
+        print "    sys.stdout.flush()"
+        print "    sys.exit(0)" }' "$SUBS/baseline/select" > "$SUBS/$1/select"
+      chmod 755 "$SUBS/$1/select"; git add -- "$SUBS/$1" ;;
     *) echo "no change defined for case $1" >&2; return 1 ;;
   esac
 }
@@ -123,10 +158,10 @@ if ! $local_mode && [ ${#want[@]} -eq 0 ]; then
   printf 'cases: %s\n' "$(printf '%s\n' "${CASES[@]}" | cut -d'|' -f1 | tr '\n' ' ')" >&2
   exit 2
 fi
-if ! $local_mode && [[ " ${want[*]} " == *" read-seed "* ]]; then
-  echo "WARNING: read-seed is a valid submission: live, it AUTO-LANDS on main if the sandbox hides the seed." >&2
+if ! $local_mode && [[ " ${want[*]} " == *" read-seed "* || " ${want[*]} " == *" persist-state "* ]]; then
+  echo "WARNING: read-seed and persist-state are valid submissions: live, it AUTO-LANDS on main if the sandbox hides the seed." >&2
   echo "Run it only against a disposable test challenge (REPO and BASE pointing at it)." >&2
-  $yes_land || { echo "refusing: pass --yes-land to run read-seed live" >&2; exit 2; }
+  $yes_land || { echo "refusing: pass --yes-land to run read-seed or persist-state live" >&2; exit 2; }
 fi
 git diff --quiet && git diff --cached --quiet || { echo "tracked changes in the working tree: commit or stash them first" >&2; exit 2; }
 
