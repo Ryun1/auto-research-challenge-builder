@@ -169,7 +169,9 @@ pub fn feed(root: &Path, slug: &str, url: &str, generated_at: &str) -> Result<Va
     out.insert(
         "taxonomy".into(),
         json!({"version": spec.tax.version, "axes": tax_axes,
-               "rules": spec.tax.rules.iter().map(|r| &r.text).collect::<Vec<_>>()}),
+               "rules": spec.tax.rules.iter()
+                   .map(|r| json!({"text": r.text, "reason": r.reason}))
+                   .collect::<Vec<_>>()}),
     );
     out.insert("submissions".into(), Value::Array(submissions));
     out.insert("directions".into(), Value::Array(directions));
@@ -330,6 +332,9 @@ mod tests {
         let alpha = dirs.iter().find(|d| d["name"] == "alpha").unwrap();
         assert_eq!(alpha["root"], "a");
         assert_eq!(alpha["submissions"], json!(["b", "a"]));
+        let rule = &f["taxonomy"]["rules"][0];
+        assert!(!rule["text"].as_str().unwrap().is_empty());
+        assert!(rule["reason"].is_string());
         let vals = f["taxonomy"]["axes"][0]["values"].as_array().unwrap();
         let get = |id: &str| vals.iter().find(|v| v["id"] == id).unwrap();
         assert_eq!(get("baseline")["count"], 1);

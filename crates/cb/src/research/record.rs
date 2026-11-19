@@ -144,6 +144,7 @@ pub fn record(
         "submission": decl.id, "commit": a.commit, "by": a.by, "model": model,
         "contract": decl.contract, "novelty": decl.novelty, "direction": direction,
         "parent": decl.parent, "taxonomy": decl.taxonomy,
+        "taxonomy_version": spec.tax.version,
         "proposed": decl.proposed(&spec.tax), "summary": decl.summary,
         "claims": decl.to_json()["claims"], "axes": axes, "checks": runs[0]["checks"],
         "runs": runs.iter().map(|r| json!({
@@ -227,6 +228,7 @@ mod tests {
         assert_eq!(e["schema"], 2);
         assert_eq!(e["direction"], "d1");
         assert_eq!(e["model"], "m1");
+        assert_eq!(e["taxonomy_version"], 1);
         assert_eq!(e["axes"]["fees"]["n"], 3);
         assert_eq!(e["runs"].as_array().unwrap().len(), 1);
         let text = std::fs::read_to_string(root.join("toy/results.jsonl")).unwrap();

@@ -38,7 +38,8 @@ Each entry gives the mechanism, what it should do to the axes, and the cheapest
 test that could show it wrong. The predictions are guesses. A submission that
 refutes one is a useful result.
 
-1. **Largest-first in a compiled language.** Port `baseline` as it is.
+1. **Largest-first in a compiled language.** Port `baseline` as it is
+   (`builds-on baseline`).
    - Expected: fees, dust and inputs/tx identical (same algorithm, deterministic);
      latency and peak RSS near `random-improve`'s.
    - Cheapest test: the port itself. If latency stays near 0.085 ms, the gap

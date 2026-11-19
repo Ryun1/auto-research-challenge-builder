@@ -393,6 +393,9 @@ pub struct TaxValue {
 #[serde(deny_unknown_fields)]
 pub struct Rule {
     pub text: String,
+    /// Why the rule holds; shown beside it on the site.
+    #[serde(default)]
+    pub reason: String,
 }
 
 impl Taxonomy {
@@ -628,6 +631,9 @@ definition = "How inputs are chosen"
 values = [ { id = "largest-first", definition = "a" }, { id = "random-improve", definition = "b" } ]
 [[rules]]
 text = "no-change requires exact search"
+reason = "largest-first rarely lands on an exact match"
+[[rules]]
+text = "a rule without a reason"
 "#;
 
     const DECL: &str = r#"id = "random-improve"
@@ -657,7 +663,12 @@ claims = [ { property = "change-privacy", argument = "because" } ]
         assert_eq!(s.properties_for("wallet@1").len(), 2);
         assert_eq!(s.limits_json()["cpu_secs"], 60);
         assert_eq!(s.limits_json()["build_secs"], 1800);
-        assert!(Taxonomy::parse(TAX).is_ok());
+        let t = Taxonomy::parse(TAX).unwrap();
+        assert_eq!(
+            t.rules[0].reason,
+            "largest-first rarely lands on an exact match"
+        );
+        assert_eq!(t.rules[1].reason, "");
     }
 
     fn bad(from: &str, to: &str) -> String {

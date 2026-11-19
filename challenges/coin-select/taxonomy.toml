@@ -1,3 +1,8 @@
+# Maintainers edit this file in their own PR, never in a submission PR.
+# Adding axes or values keeps `version`. Renaming or removing one changes what
+# earlier labels mean: copy this file to taxonomy-v<version>.toml first, then
+# bump `version`. Every results.jsonl row records the version it was labelled
+# under (`taxonomy_version`).
 version = 1
 
 [[axes]]
@@ -43,7 +48,9 @@ values = [
 ]
 
 [[rules]]
-text = "change = none-when-possible needs an exact-match search (branch-and-bound or exhaustive), not largest-first"
+text   = "change = none-when-possible needs an exact-match search (branch-and-bound or exhaustive), not largest-first"
+reason = "Largest-first stops at the first coins that cover the payment, so it seldom lands on an amount that needs no change; finding one means searching subsets"
 
 [[rules]]
-text = "consolidation other than none costs extra inputs per transaction: expect it to trade fees now for dust later"
+text   = "consolidation other than none costs extra inputs per transaction: expect it to trade fees now for dust later"
+reason = "Each extra input adds 140 bytes to the transaction, 6,160 lovelace of fee at min_fee_a = 44"

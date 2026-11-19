@@ -65,7 +65,12 @@ file = "taxonomy.toml"
     )
 }
 
-const TAXONOMY: &str = r#"version = 1
+const TAXONOMY: &str = r#"# Maintainers edit this file in their own PR, never in a submission PR.
+# Adding axes or values keeps `version`. Renaming or removing one changes what
+# earlier labels mean: copy this file to taxonomy-v<version>.toml first, then
+# bump `version`. Every results.jsonl row records the version it was labelled
+# under (`taxonomy_version`).
+version = 1
 
 [[axes]]
 id         = "approach"
@@ -76,7 +81,8 @@ values = [
 ]
 
 [[rules]]
-text = "TODO: example rule, e.g. a value that is only plausible with another"
+text   = "TODO: example rule, e.g. a value that is only plausible with another"
+reason = "TODO: why it holds"
 "#;
 
 const BASELINE_DECL: &str = r#"id        = "baseline"
@@ -175,7 +181,9 @@ that changes nothing else. Merged submissions are immutable.
    properties only) and `model`.
 3. Novelty is your own declaration and is never judged. `new` starts a direction
    `<name>` that no accepted submission uses. `builds-on` names an accepted
-   `parent`; copy its directory and edit it. The direction is inherited.
+   `parent`; copy its directory and edit it. The direction is inherited. A port
+   to another language, or a new name, seed or constant on an accepted approach,
+   is `builds-on`, not `new`.
 4. CI builds your submission and runs the contract's judge, which checks the
    properties and measures every axis. Those numbers are a claim from the PR run.
 5. There is no record to beat and no minimum improvement. If the checks pass, the
@@ -196,8 +204,10 @@ open), `submissions/` and `taxonomy.toml`.
 Create ONE new directory `submissions/<id>/` and change nothing else. It needs a
 `submission.toml` and an executable `build.sh`; see `SUBMITTING.md` for the fields.
 Either start a new direction or copy an accepted submission's directory and build on it.
-Declare novelty honestly. You choose which axes in `challenge.toml` to push: they are
-measured, recorded and never ranked or combined, so a trade-off is a fine result.
+Declare novelty honestly: porting an accepted submission to another language, or
+retuning its constants or seed, is `builds-on`, not a new direction. You choose which
+axes in `challenge.toml` to push: they are measured, recorded and never ranked or
+combined, so a trade-off is a fine result.
 "#
     )
 }
