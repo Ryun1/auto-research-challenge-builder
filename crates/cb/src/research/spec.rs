@@ -442,6 +442,13 @@ pub struct Declaration {
     pub claims: Vec<Claim>,
     #[serde(default)]
     pub model: String,
+    /// What should happen and why, before it is measured (#104).
+    #[serde(default)]
+    pub hypothesis: String,
+    /// Axis id → `lower` | `same` | `higher`, relative to the parent
+    /// (builds-on) or the baseline (new). See `research::predict`.
+    #[serde(default)]
+    pub expected: BTreeMap<String, String>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -512,6 +519,23 @@ impl Declaration {
         }
         if self.claims.len() > 16 {
             p.push("claims: at most 16".into());
+        }
+        if self.hypothesis.chars().count() > 300 {
+            p.push("hypothesis: at most 300 chars".into());
+        }
+        let axes = spec.axes_for(&self.contract);
+        for (k, v) in &self.expected {
+            if !axes.iter().any(|a| &a.id == k) {
+                p.push(format!(
+                    "expected {k:?}: not an axis of {:?}",
+                    self.contract
+                ));
+            }
+            if !super::predict::OUTCOMES.contains(&v.as_str()) {
+                p.push(format!(
+                    "expected {k:?}: {v:?} is not lower, same or higher"
+                ));
+            }
         }
         for (k, v) in &self.taxonomy {
             if !spec.tax.axes.iter().any(|a| &a.id == k) {
@@ -745,6 +769,27 @@ claims = [ { property = "change-privacy", argument = "because" } ]
         with("wallet@1", "wallet-multiasset@0");
         with("wallet@1", "nope@1");
         with("novelty = \"new\"", "novelty = \"maybe\"");
+    }
+
+    #[test]
+    fn hypothesis_and_expected() {
+        let ok = format!("{DECL}hypothesis = \"fewer inputs\"\nexpected = {{ fees = \"lower\", time = \"same\" }}\n");
+        assert_eq!(check(&ok), Vec::<String>::new());
+        let d = Declaration::parse(&ok).unwrap();
+        assert_eq!(d.expected["fees"], "lower");
+        let bad = |extra: &str, want: &str| {
+            let p = check(&format!("{DECL}{extra}\n"));
+            assert!(p.iter().any(|x| x.contains(want)), "{extra}: {p:?}");
+        };
+        bad("expected = { colour = \"lower\" }", "not an axis");
+        bad(
+            "expected = { fees = \"less\" }",
+            "not lower, same or higher",
+        );
+        bad(
+            &format!("hypothesis = \"{}\"", "x".repeat(301)),
+            "hypothesis",
+        );
     }
 
     #[test]

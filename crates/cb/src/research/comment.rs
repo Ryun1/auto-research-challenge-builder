@@ -23,6 +23,37 @@ fn s<'a>(v: &'a Value, d: &'a str) -> &'a str {
     v.as_str().unwrap_or(d)
 }
 
+/// The predicted-against-measured table from a recorded row (#104).
+fn predictions(entry: &Value) -> String {
+    let Some(ps) = entry["predictions"].as_array().filter(|p| !p.is_empty()) else {
+        return String::new();
+    };
+    let reference = md(s(&ps[0]["reference"], "?"));
+    let mut out = format!(
+        "| axis | expected | measured | this run | `{reference}` |\n|---|---|---|---|---|\n"
+    );
+    for p in ps {
+        let verdict = match p["held"].as_bool() {
+            Some(true) => " (held)",
+            Some(false) => " (refuted)",
+            None => "",
+        };
+        out += &format!(
+            "| {} | {} | {}{verdict} | {} | {} |\n",
+            md(s(&p["axis"], "?")),
+            md(s(&p["expected"], "?")),
+            md(s(&p["measured"], "?")),
+            num(&p["own"]),
+            num(&p["reference_value"]),
+        );
+    }
+    out += &format!(
+        "\n_Predictions compare this run with `{reference}`'s accepted medians, within each axis's tolerance. \
+         A refuted prediction is a result, not a failure._\n\n"
+    );
+    out
+}
+
 pub fn comment(gate: &Value, claim: Option<&Value>, entry: Option<&Value>) -> String {
     let mut out = String::from("<!-- cb:score -->\n### Challenge builder\n\n");
     let decl = &gate["declaration"];
@@ -49,6 +80,9 @@ pub fn comment(gate: &Value, claim: Option<&Value>, entry: Option<&Value>) -> St
             .map(|(k, v)| format!("{}={}", md(k), md(s(v, "?"))))
             .collect();
         out += &format!("- taxonomy: {}\n", pairs.join(", "));
+    }
+    if let Some(h) = decl["hypothesis"].as_str().filter(|h| !h.trim().is_empty()) {
+        out += &format!("- hypothesis: {}\n", md(h));
     }
     out += "\n";
     match claim {
@@ -94,6 +128,7 @@ pub fn comment(gate: &Value, claim: Option<&Value>, entry: Option<&Value>) -> St
         }
     }
     if let Some(e) = entry {
+        out += &predictions(e);
         out += &format!(
             "Recorded as `{}`: {}\n\n",
             md(s(&e["status"], "?")),
@@ -128,6 +163,33 @@ mod tests {
         assert!(c.contains("fees") && c.contains("10.1235") && c.contains("9–11"));
         assert!(c.contains("unverified"));
         assert!(c.contains("There is no record to beat: every submission that passes is recorded."));
+    }
+
+    #[test]
+    fn research_comment_shows_hypothesis_and_predictions() {
+        let mut g = gate();
+        g["declaration"]["hypothesis"] = json!("fewer <b>inputs</b> @carol");
+        let entry = json!({"status": "valid", "reason": "", "predictions": [
+            {"axis": "fees", "expected": "lower", "measured": "lower", "held": true,
+             "reference": "baseline", "own": 8.0, "reference_value": 10.0},
+            {"axis": "dust", "expected": "lower", "measured": "higher", "held": false,
+             "reference": "baseline", "own": 3.0, "reference_value": 1.0},
+            {"axis": "time", "expected": "same", "measured": "unknown", "held": null,
+             "reference": "baseline", "own": null, "reference_value": null}]});
+        let c = comment(&g, Some(&claim()), Some(&entry));
+        assert!(c.contains("- hypothesis: "));
+        assert!(!c.contains("<b>") && !c.contains("@carol"));
+        assert!(c.contains("| fees | lower | lower (held) | 8 | 10 |"));
+        assert!(c.contains("| dust | lower | higher (refuted) | 3 | 1 |"));
+        assert!(c.contains("| time | same | unknown | - | - |"));
+        assert!(c.contains("A refuted prediction is a result, not a failure."));
+        // No predictions, no table.
+        let plain = comment(
+            &gate(),
+            Some(&claim()),
+            Some(&json!({"status": "valid", "reason": ""})),
+        );
+        assert!(!plain.contains("expected") && !plain.contains("hypothesis"));
     }
 
     #[test]

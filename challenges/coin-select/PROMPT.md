@@ -13,5 +13,8 @@ submission's directory and build on it. Declare novelty honestly: porting an acc
 submission to another language, or retuning its constants or seed, is `builds-on`,
 not a new direction. You choose which axes in `challenge.toml` to push (fees, dust,
 inputs per transaction, latency, memory): they are measured, recorded and never
-ranked or combined, so a trade-off is a fine result. Run the judge locally (see
-`README.md`) before opening a PR.
+ranked or combined, so a trade-off is a fine result. Before measuring, write your
+hypothesis and the axes you expect to move in `submission.toml` (`hypothesis`,
+`expected`; see `SUBMITTING.md`). If the measurement refutes it, submit anyway and
+say so: that is a result. Run the judge locally (see `README.md`) before opening a
+PR.
