@@ -218,7 +218,7 @@ refusal_matches() {
 }
 # A measured verdict: the gate passed and the comment's Status line says $2.
 status_matches() {
-  ! grep -qF "Refused by the gate" <<<"$1" && grep -qE "Status: $2( |$)" <<<"$1"
+  ! grep -qF "Refused by the gate" <<<"$1" && grep -qE "Status: $2([^a-z_]|$)" <<<"$1"
 }
 
 fail=0
