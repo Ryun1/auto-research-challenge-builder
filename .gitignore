@@ -1,2 +1,3 @@
 target/
 .lean-bin
+__pycache__/
