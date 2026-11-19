@@ -59,12 +59,13 @@ max_bytes  = 4194304          # per submission dir
 toolchains = ["python3 (ubuntu-24.04 image)", "rust stable via rustup (ubuntu-24.04 image)"]
 writable   = ["~/.cargo"]     # build-sandbox overlays (writes vanish after the build)
 
-[limits]                      # per participant process tree, enforced by `cb participant`
+[limits]                      # per participant process TREE, enforced by `cb participant`
 cpu_secs   = 60
-memory_mib = 1024
-processes  = 32
+memory_mib = 1024             # whole tree: cgroup v2 memory.max in the sandbox
+processes  = 32               # whole tree: cgroup v2 pids.max in the sandbox
 file_mib   = 64               # largest file it may write, and its private /tmp
 wall_secs  = 120
+build_secs = 1800             # the build step (build sandbox); a hang is `rejected: build: timed out`
 
 [[contracts]]
 id           = "wallet@1"     # <name>@<version>
@@ -231,25 +232,37 @@ which the judge calls; stdin, stdout and stderr pass through (so the judge can
 speak a line protocol). It reads `CB_LIMITS` and `CB_SANDBOX` from its env.
 
 - `CB_SANDBOX=1` (Linux, passwordless sudo): `sudo -n unshare --mount --net
-  --pid --fork --kill-child --mount-proc` then, as root inside: bind the cwd
-  read-only onto `/mnt`; fresh tmpfs (size `file_mib`) on `/tmp`, `/var/tmp`,
-  `/dev/shm`; tmpfs on `/run/user` if present; `cd /mnt`; `timeout -k 2
-  <wall_secs>` + `prlimit --cpu --as --nproc --fsize` + `setpriv` to uid/gid
-  65534 with `--clear-groups --no-new-privs` and `env -i PATH=/usr/local/bin:/usr/bin:/bin HOME=/tmp`.
-  So the participant runs as `nobody`, with no network, cannot see the judge's
+  --pid --ipc --uts --fork --kill-child --mount-proc` then, as root inside: bind
+  the cwd read-only onto `/mnt`; fresh tmpfs (size `file_mib`) on `/tmp`,
+  `/var/tmp`, `/dev/shm`, `/run/lock`, `/var/crash`, `/dev/mqueue` and
+  `/run/user` (each if present), so no world-writable host path survives
+  between invocations; `cd /mnt`; join a per-invocation cgroup v2 with
+  `memory.max` = `memory_mib` and `pids.max` = `processes` (limits on the whole
+  process tree); `timeout -k 2 <wall_secs>` + `prlimit --cpu --as --nproc
+  --fsize` (per-process backstops) + `setpriv` to uid/gid 65534 with
+  `--clear-groups --no-new-privs` and `env -i PATH=/usr/local/bin:/usr/bin:/bin HOME=/tmp`.
+  So the participant runs as `nobody`, with no network, private IPC (SysV
+  shm/semaphores, POSIX mqueues) and hostname, cannot see the judge's
   processes or temp files, cannot write its own dir, and keeps no state between
   invocations. Commands must use paths relative to the submission dir.
 - `CB_SANDBOX=0`: runs as the current user in its own process group with
   `RLIMIT_CPU` and `RLIMIT_FSIZE` (plus `RLIMIT_AS` on Linux), killed at
   `wall_secs`. For laptops and tests only.
-- Measured from outside the participant: wall time, CPU time and peak RSS
-  (`wait4` rusage of the whole chain; Linux propagates the largest descendant's
-  max RSS). The report (`--report`):
-  `{"status": "ok"|"failed"|"timeout"|"cpu_limit", "exit_code": int|null,
-    "signal": int|null, "wall_secs", "cpu_secs", "peak_rss_mib"}`.
+- Measured from outside the participant: wall time and CPU time (`wait4`
+  rusage of the whole chain) and, in the sandbox, peak memory as the cgroup's
+  `memory.peak` (the whole tree, including page cache; with `CB_SANDBOX=0`
+  the largest descendant's max RSS). The report (`--report`):
+  `{"status": "ok"|"failed"|"timeout"|"cpu_limit"|"memory_limit"|"infra",
+    "exit_code": int|null, "signal": int|null, "wall_secs", "cpu_secs",
+    "peak_rss_mib"}`.
   `cb participant` exits with the participant's code (`128+signal` if
-  killed, `124` on timeout). Exceeding a limit is the submission's failure:
-  the judge reports a failing check, so it is `rejected`, never `infra_failed`.
+  killed, `124` on timeout). Exceeding a limit (including the tree hitting
+  `memory.max`: `memory_limit`) is the submission's failure: the judge reports a
+  failing check, so it is `rejected`, never `infra_failed`. `infra` (exit
+  `125`) means the sandbox setup itself failed: the judge reports
+  `infra: true`, so the run is `infra_failed`. `cb measure` also probes the
+  participant sandbox once before the judge and returns `infra_failed` if the
+  probe fails.
 
 ## 5. Trust
 
@@ -315,10 +328,28 @@ Workflows:
   commit removes `challenges/<slug>/submissions/<id>` (`[skip actions]`). The
   record job's concurrency group is per slug. `by` comes from the
   `Submitted-by` trailer, else the actor.
+  - **No concurrency group** on the record job: a group cancels the pending
+    job when another queues, which would lose records. Records are union-merged
+    appends and a removal touches only its own directory, so the `pull --rebase`
+    retry loop orders them.
+  - **Record runs even if a measure job failed or timed out** (`always()`): the
+    missing `measure.json` is replaced by an `infra_failed` stand-in, so the
+    record still happens (infra_failed does not remove). The run job's timeout
+    (90 min) is well above the build's own `build_secs` (30 min).
+  - A push that is a Comment landing (`submission: ` subject plus a `PR:`
+    trailer) which the gate now refuses fails Accept loudly instead of exiting
+    quietly.
+  - Dispatch refuses to re-measure an id whose latest accept/baseline row is
+    `accepted`, unless the `force` input is set; a forced re-measure never
+    removes the directory.
+  - Comment's landing push re-checks after every rebase that only new files
+    under the PR's own directory differ from main and that main does not hold
+    the directory (a same-id submission landing meanwhile fails the job).
 - **promote.yml**: detect skips a `type = research` gate result.
 - **ci.yml**: `paths-ignore` adds `challenges/*/submissions/**` for PRs; pushes
   ignore `challenges/*/submissions/**` and `challenges/*/results.jsonl`.
-- **site.yml**: also runs after Accept.
+- **site.yml**: also runs after Accept; its push trigger ignores
+  `challenges/*/submissions/**` (landing pushes).
 - **scripts/audit-main.sh**: deploy-key pushes may also add or remove files
   under `challenges/<slug>/submissions/<id>/`, from Comment or Accept runs.
 
@@ -348,7 +379,10 @@ the same `Report`. Checks:
   `self-report`; others may be added. Each must build, then: `self-report` must
   be `valid` with every axis within `max(tolerance, 2 * observed spread)` of
   the baseline (its self-reported numbers were ignored); every other variant
-  must be `rejected`.
+  must be `rejected`. A variant may carry an `EXPECT` file: its first non-empty
+  line is `valid`, or a substring the rejection reason must contain (so
+  `off-by-one` can insist on `fee below min_fee`, and `deep-json` on
+  `unparseable`, rather than any rejection passing).
 - **hostable**: build + measure minutes, max RSS, disk for the baseline, as today.
 
 ## 8. Feed and site

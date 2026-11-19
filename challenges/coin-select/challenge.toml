@@ -12,10 +12,10 @@ max_bytes  = 4194304        # per submission dir
 toolchains = ["python3 (ubuntu-24.04 image)", "rust stable via rustup (ubuntu-24.04 image)"]
 writable   = ["~/.cargo"]   # build-sandbox overlays (writes vanish after the build)
 
-[limits]                    # per participant process tree, enforced by `cb participant`
+[limits]                    # per participant process TREE, enforced by `cb participant`
 cpu_secs   = 60
-memory_mib = 1024
-processes  = 32
+memory_mib = 1024           # whole tree: cgroup v2 memory.max in the sandbox
+processes  = 32             # whole tree: cgroup v2 pids.max in the sandbox
 file_mib   = 64             # largest file it may write, and its private /tmp
 wall_secs  = 120
 

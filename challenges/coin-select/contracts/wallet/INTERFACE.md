@@ -3,7 +3,8 @@
 `build.sh` (run offline in the submission dir) must leave an executable `./select` in
 that dir. The judge starts it once per scenario, through `cb participant`, with the
 submission dir as the working directory (use relative paths; the sandbox mounts it
-read-only and gives a private empty `/tmp`). It speaks JSON lines on stdin/stdout,
+read-only and gives a private empty `/tmp`; nothing it writes survives the run, and
+IPC and the hostname are private too). It speaks JSON lines on stdin/stdout,
 one object per line, UTF-8. stderr is discarded. Flush after every reply.
 
 All amounts are integer lovelace. Floats, negatives and booleans in place of
@@ -51,7 +52,9 @@ The participant must exit with status 0. The judge then closes stdin.
 - `inputs` is non-empty, has no duplicates, and every id is in the current wallet;
 - `sum(inputs) = sum(outputs) + sum(change) + fee`;
 - `fee >= min_fee`; every change output is `>= min_ada`; `size <= max_tx_size`;
-- the reply is one well-formed line of at most 64 KiB, in time.
+- the reply is one well-formed line of at most 64 KiB, in time. A reply the judge
+  cannot decode or check for any reason (invalid or absurdly nested JSON, wrong
+  types) is a plain `valid-txs` failure, "unparseable reply".
 
 You may pay more than the minimum fee, use no change output, or several.
 
@@ -69,7 +72,8 @@ You may pay more than the minimum fee, use no change output, or several.
 
 ## Scenarios
 
-Eight per judge run, from `CB_SEED`: 60 to 120 initial UTxOs (log-normal around 50
+Eight per judge run, from `CB_SEED` through a SHA-256 counter-mode stream (so what
+you have seen reveals nothing about later events): 60 to 120 initial UTxOs (log-normal around 50
 ADA), then 300 events: about 30% deposits of one to five UTxOs, about 70% payments of
 one to three outputs (log-normal around 20 ADA, at least 1 ADA each). Payments are
 always fundable, assuming each earlier transaction cost at most 1 ADA in fees. The
@@ -83,5 +87,6 @@ from `cb participant`'s report, never from anything your program prints about it
 
 ## Limits
 
-Per run: 60 s CPU, 1024 MiB memory, 32 processes, 64 MiB of files, 120 s wall.
-Exceeding one is a `valid-txs` failure.
+Per run: 60 s CPU, 120 s wall, 64 MiB of files, and, for the whole process tree of
+your program (not per process), 1024 MiB memory and 32 processes. Exceeding one is a
+`valid-txs` failure. Peak memory is the tree's cgroup peak, including page cache.
