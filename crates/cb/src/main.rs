@@ -227,6 +227,12 @@ fn main() -> ExitCode {
                 }
                 Err(e) => {
                     eprintln!("cb: {e}");
+                    // Tell the judge this was the infrastructure, not the submission.
+                    if let Some(p) = report {
+                        let r = research::participant::Report::infra(e, 0.0);
+                        let text = serde_json::to_string_pretty(&r).unwrap();
+                        let _ = std::fs::write(&p, text + "\n");
+                    }
                     std::process::exit(125);
                 }
             }

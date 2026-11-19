@@ -164,6 +164,26 @@ pub fn measure(
         return finish(m, "rejected", &format!("build: {}", clip(&b.detail, 300)));
     }
     let _ = Command::new("chmod").args(["-R", "a+rX"]).arg(&ws).status();
+    // Probe the participant sandbox before the judge relies on it: a broken
+    // sandbox must not read as every submission failing.
+    if sandbox {
+        let limits = spec.limits.clone();
+        match super::participant::run(&["true".into()], &limits, true) {
+            Ok(r) if r.status == "ok" => {}
+            Ok(r) => {
+                let why = format!(
+                    "participant sandbox unavailable: {}: {}",
+                    r.status,
+                    r.detail.unwrap_or_default()
+                );
+                return finish(m, "infra_failed", &clip(&why, 300));
+            }
+            Err(e) => {
+                let why = format!("participant sandbox unavailable: {e}");
+                return finish(m, "infra_failed", &clip(&why, 300));
+            }
+        }
+    }
     let seed = seed_override.unwrap_or_else(preflight::seed);
     m["seed"] = json!(seed.to_string());
 
