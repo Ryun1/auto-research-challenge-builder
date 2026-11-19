@@ -34,8 +34,10 @@ runs:
         echo "key=cabal-$SLUG-$(sha256sum "challenges/$SLUG/setup.sh" 2>/dev/null | cut -c1-16)" >> "$GITHUB_OUTPUT"
         # The prebuilt reference + warm baseline build (#54): everything that
         # shapes them (pin, package list, harness, build script, baseline).
+        # `true`: a challenge without some of these (a research challenge has no
+        # baseline/) must still get a key; the hashed bytes are unchanged.
         lk=$(cd "challenges/$SLUG" && { cat setup.sh build.sh packages.txt harness/*; \
-          find baseline -type f | LC_ALL=C sort | xargs cat; } 2>/dev/null | sha256sum | cut -c1-16)
+          find baseline -type f | LC_ALL=C sort | xargs cat; true; } 2>/dev/null | sha256sum | cut -c1-16)
         echo "ledger-key=cb-$SLUG-$lk" >> "$GITHUB_OUTPUT"
       env:
         SLUG: ${{ inputs.slug }}
