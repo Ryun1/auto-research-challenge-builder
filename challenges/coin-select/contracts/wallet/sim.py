@@ -17,7 +17,7 @@ PARAMS = {
     "max_tx_size": 16384,
     "size": {"base": 60, "input": 140, "output": 65},
 }
-N_SCENARIOS = 4
+N_SCENARIOS = 8
 N_EVENTS = 300
 FEE_BUDGET = 1 * ADA  # fundability assumes every earlier tx cost at most this
 

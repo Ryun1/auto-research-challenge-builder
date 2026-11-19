@@ -19,7 +19,7 @@ Answer every question. "N/A" needs a reason.
 
 ## Could a submission overfit fixed inputs?
 
-- Are inputs fresh per seed, and how many distinct ones are there?: Scenarios are generated from a fresh seed drawn after the build, four scenarios per run with random wallets and payment streams, so inputs are effectively unbounded in number. The two runs on main use independent seeds, and preflight checks that different seeds give different `inputs` digests.
+- Are inputs fresh per seed, and how many distinct ones are there?: Scenarios are generated from a fresh seed drawn after the build, eight scenarios per run with random wallets and payment streams, so inputs are effectively unbounded in number. The two runs on main use independent seeds, and preflight checks that different seeds give different `inputs` digests.
 
 ## Could a submission persist state between runs?
 

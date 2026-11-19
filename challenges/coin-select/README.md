@@ -9,13 +9,13 @@ longer. There is no single winner, which is what the map on the site is for.
 
 A submission is a program `./select` that is told the protocol parameters, the
 wallet's deposits and a stream of payments, and answers each payment with the inputs
-to spend, the change outputs and the fee. A trusted judge replays four seeded
+to spend, the change outputs and the fee. A trusted judge replays eight seeded
 scenarios of 300 events each, checks every transaction against a size, fee and
 min-ada model, and measures five axes from those same transactions:
 
 | axis | meaning | direction |
 |---|---|---|
-| `fees` | total fees in ADA, mean over the 4 scenarios | minimise |
+| `fees` | total fees in ADA, mean over the 8 scenarios | minimise |
 | `dust` | UTxOs under 2 ADA left at the end, mean over scenarios | minimise |
 | `inputs_per_tx` | inputs per transaction, over all scenarios | minimise |
 | `latency_ms` | median time from `pay` to reply, measured by the judge | minimise |

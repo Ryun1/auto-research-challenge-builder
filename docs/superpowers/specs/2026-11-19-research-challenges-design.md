@@ -425,7 +425,7 @@ each change `>= min_ada`; `size <= max_tx_size`; well-formed, in time),
 `serves-feasible` (mechanical: refuses only when the judge's own largest-first
 cannot pay), `change-privacy` (declared).
 
-Scenarios: 4 per judge run from `CB_SEED`, each ~60–120 initial UTxOs and 300
+Scenarios: 8 per judge run from `CB_SEED`, each ~60–120 initial UTxOs and 300
 events (deposits including small reward-like ones, payments of 1–3 outputs,
 log-normal amounts; always fundable). `inputs` = sha256 of the scenarios.
 

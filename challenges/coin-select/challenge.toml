@@ -53,21 +53,21 @@ id        = "fees"
 unit      = "ADA"
 direction = "minimise"
 repeats   = 1
-tolerance = 0.1
+tolerance = 0.08
 
 [[axes]]
 id        = "dust"
 unit      = "UTxOs"
 direction = "minimise"
 repeats   = 1
-tolerance = 0.3
+tolerance = 0.25
 
 [[axes]]
 id        = "inputs_per_tx"
 unit      = "inputs"
 direction = "minimise"
 repeats   = 1
-tolerance = 0.1
+tolerance = 0.25
 
 [[axes]]
 id        = "latency_ms"
@@ -81,7 +81,7 @@ id        = "peak_rss_mib"
 unit      = "MiB"
 direction = "minimise"
 repeats   = 3
-tolerance = 0.5
+tolerance = 0.3
 
 [taxonomy]
 file = "taxonomy.toml"

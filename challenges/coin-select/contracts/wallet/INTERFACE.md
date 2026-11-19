@@ -69,7 +69,7 @@ You may pay more than the minimum fee, use no change output, or several.
 
 ## Scenarios
 
-Four per judge run, from `CB_SEED`: 60 to 120 initial UTxOs (log-normal around 50
+Eight per judge run, from `CB_SEED`: 60 to 120 initial UTxOs (log-normal around 50
 ADA), then 300 events: about 30% deposits of one to five UTxOs, about 70% payments of
 one to three outputs (log-normal around 20 ADA, at least 1 ADA each). Payments are
 always fundable, assuming each earlier transaction cost at most 1 ADA in fees. The
