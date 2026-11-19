@@ -78,7 +78,8 @@ import Cardano.Ledger.Binary (
   TokenType (..),
   allowTag,
   decodeAccA,
-  decodeBreakOr,
+  decodeFoldStateIndef,
+  decodeFoldStateN,
   decodeList,
   decodeListLenOrIndef,
   decodeListLikeWithCount,
@@ -635,6 +636,13 @@ instance AlonzoEraScript era => DecCBOR (Annotator (RedeemersRaw era)) where
 -- | Encodes memoized bytes created upon construction.
 instance AlonzoEraScript era => EncCBOR (Redeemers era)
 
+-- | The witness-set map loop's state before PV 12: keys seen (a bit mask) and the
+-- accumulated witnesses.
+data TxWitsAccPreV12 era = TxWitsAccPreV12 !Word !(Annotator (AlonzoTxWitsRaw era))
+
+txWitsAccPreV12Value :: TxWitsAccPreV12 era -> Annotator (AlonzoTxWitsRaw era)
+txWitsAccPreV12Value (TxWitsAccPreV12 _ wacc) = wacc
+
 instance
   (AlonzoEraScript era, DecCBOR (Annotator (NativeScript era))) =>
   DecCBOR (Annotator (AlonzoTxWitsRaw era))
@@ -695,32 +703,22 @@ instance
       decodeTxWitsPreV12 :: Decoder s (Annotator (AlonzoTxWitsRaw era))
       decodeTxWitsPreV12 =
         decodeMapLenOrIndef >>= \case
-          Just wlen -> decodeTxWitsLenPreV12 wlen 0 (pure emptyTxWitsRaw)
-          Nothing -> decodeTxWitsIndefPreV12 0 (pure emptyTxWitsRaw)
+          Just wlen ->
+            txWitsAccPreV12Value
+              <$> decodeFoldStateN wlen decodeTxWitsStepPreV12 (TxWitsAccPreV12 0 (pure emptyTxWitsRaw))
+          Nothing ->
+            txWitsAccPreV12Value
+              <$> decodeFoldStateIndef decodeTxWitsStepPreV12 (TxWitsAccPreV12 0 (pure emptyTxWitsRaw))
       {-# INLINE decodeTxWitsPreV12 #-}
 
-      decodeTxWitsLenPreV12 ::
-        Int ->
-        Word ->
-        Annotator (AlonzoTxWitsRaw era) ->
-        Decoder s (Annotator (AlonzoTxWitsRaw era))
-      decodeTxWitsLenPreV12 0 !_ !wacc = pure wacc
-      decodeTxWitsLenPreV12 remaining !wseen !wacc = do
+      -- One key and its value. The keys seen and the accumulator are forced before
+      -- the next key is read, as the bang patterns of the recursive loop did.
+      decodeTxWitsStepPreV12 :: TxWitsAccPreV12 era -> Decoder s (TxWitsAccPreV12 era)
+      decodeTxWitsStepPreV12 (TxWitsAccPreV12 wseen wacc) = do
         wkey <- decodeWord
         wacc' <- decodeTxWitsFieldPreV12 wseen wacc wkey
-        decodeTxWitsLenPreV12 (remaining - 1) (setBit wseen (fromIntegral wkey)) wacc'
-
-      decodeTxWitsIndefPreV12 ::
-        Word ->
-        Annotator (AlonzoTxWitsRaw era) ->
-        Decoder s (Annotator (AlonzoTxWitsRaw era))
-      decodeTxWitsIndefPreV12 !wseen !wacc =
-        decodeBreakOr >>= \case
-          True -> pure wacc
-          False -> do
-            wkey <- decodeWord
-            wacc' <- decodeTxWitsFieldPreV12 wseen wacc wkey
-            decodeTxWitsIndefPreV12 (setBit wseen (fromIntegral wkey)) wacc'
+        pure (TxWitsAccPreV12 (setBit wseen (fromIntegral wkey)) wacc')
+      {-# INLINE decodeTxWitsStepPreV12 #-}
 
       decodeTxWitsFieldPreV12 ::
         Word ->
