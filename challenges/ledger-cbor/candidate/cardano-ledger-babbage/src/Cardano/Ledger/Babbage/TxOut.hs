@@ -86,6 +86,8 @@ import Cardano.Ledger.Binary (
   TokenType (..),
   cborError,
   decodeBreakOr,
+  decodeFoldStateIndef,
+  decodeFoldStateN,
   decodeFullAnnotator,
   decodeListLenOrIndef,
   decodeMapLenOrIndef,
@@ -619,6 +621,16 @@ data DecodingTxOut era = DecodingTxOut
   , decodingTxOutScript :: !(StrictMaybe (Script era))
   }
 
+-- | The state of the map-form output loop before PV 12: keys seen and the fields
+-- decoded so far (lazy, as the recursive loop passed them on).
+data TxOutFieldsAcc era
+  = TxOutFieldsAcc
+      !Word
+      (StrictMaybe (Addr, CompactAddr))
+      (Value era)
+      (Datum era)
+      (StrictMaybe (Script era))
+
 decodeTxOut ::
   forall s era.
   (EraScript era, Val (Value era)) =>
@@ -676,34 +688,23 @@ decodeTxOut decAddr = do
     decodeFieldsPreV12 :: Decoder s (DecodingTxOut era)
     decodeFieldsPreV12 =
       decodeMapLenOrIndef >>= \case
-        Just mapLen -> fieldsDef mapLen 0 SNothing mempty NoDatum SNothing
-        Nothing -> fieldsIndef 0 SNothing mempty NoDatum SNothing
+        Just mapLen -> decodeFoldStateN mapLen fieldStep fieldsStart >>= fieldsFinish
+        Nothing -> decodeFoldStateIndef fieldStep fieldsStart >>= fieldsFinish
     {-# INLINE decodeFieldsPreV12 #-}
-    fieldsDef ::
-      Int ->
-      Word ->
-      StrictMaybe (Addr, CompactAddr) ->
-      Value era ->
-      Datum era ->
-      StrictMaybe (Script era) ->
-      Decoder s (DecodingTxOut era)
-    fieldsDef 0 !keysSeen addrF valF datumF scriptF =
+    -- The map loop's state: keys seen (forced before the next key is read, as the
+    -- bang pattern of the recursive loop did) and the values as they came.
+    fieldsStart :: TxOutFieldsAcc era
+    fieldsStart = TxOutFieldsAcc 0 SNothing mempty NoDatum SNothing
+    fieldsFinish :: TxOutFieldsAcc era -> Decoder s (DecodingTxOut era)
+    fieldsFinish (TxOutFieldsAcc keysSeen addrF valF datumF scriptF) =
       fieldsDone keysSeen addrF valF datumF scriptF
-    fieldsDef pairsLeft !keysSeen addrF valF datumF scriptF =
-      let !pairsLeft' = pairsLeft - 1
-       in decodeField keysSeen addrF valF datumF scriptF (fieldsDef pairsLeft')
-    fieldsIndef ::
-      Word ->
-      StrictMaybe (Addr, CompactAddr) ->
-      Value era ->
-      Datum era ->
-      StrictMaybe (Script era) ->
-      Decoder s (DecodingTxOut era)
-    fieldsIndef !keysSeen addrF valF datumF scriptF =
-      decodeBreakOr >>= \case
-        True -> fieldsDone keysSeen addrF valF datumF scriptF
-        False -> decodeField keysSeen addrF valF datumF scriptF fieldsIndef
+    fieldStep :: TxOutFieldsAcc era -> Decoder s (TxOutFieldsAcc era)
+    fieldStep (TxOutFieldsAcc keysSeen addrF valF datumF scriptF) =
+      decodeField keysSeen addrF valF datumF scriptF $ \keysSeen' addrF' valF' datumF' scriptF' ->
+        pure (TxOutFieldsAcc keysSeen' addrF' valF' datumF' scriptF')
+    {-# INLINE fieldStep #-}
     decodeField ::
+      forall r.
       Word ->
       StrictMaybe (Addr, CompactAddr) ->
       Value era ->
@@ -714,9 +715,9 @@ decodeTxOut decAddr = do
         Value era ->
         Datum era ->
         StrictMaybe (Script era) ->
-        Decoder s (DecodingTxOut era)
+        Decoder s r
       ) ->
-      Decoder s (DecodingTxOut era)
+      Decoder s r
     decodeField keysSeen addrF valF datumF scriptF kont = do
       fieldKey <- decodeWord
       case fieldKey of

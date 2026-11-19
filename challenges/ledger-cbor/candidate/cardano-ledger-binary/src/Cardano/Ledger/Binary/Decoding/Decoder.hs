@@ -77,6 +77,8 @@ module Cardano.Ledger.Binary.Decoding.Decoder (
   decodeStrictSeq,
   decodeSetTag,
   decodeListLikeWithCount,
+  decodeFoldStateN,
+  decodeFoldStateIndef,
   decodeListLikeWithCountT,
   decodeSetLikeEnforceNoDuplicates,
   decodeNonEmptySetLikeEnforceNoDuplicates,
@@ -1192,6 +1194,64 @@ decodeListLikeWithCount decodeLenOrIndef insert decodeElement =
                 DOk off'' element -> goIndef (count + 1) (insert element acc) off''
 {-# INLINE decodeListLikeWithCount #-}
 
+-- | @decodeFoldStateN n step z@ runs @step@ @n@ times, each time on the state the
+-- previous run produced, starting from @z@: the same as
+--
+-- > go 0 st = pure st
+-- > go k st = step st >>= go (k - 1)
+--
+-- The state is passed on as it is (not forced). The direct form is one loop over
+-- the offset, so a `step` that is inlined here is not rebuilt as a `Decoder` per
+-- iteration.
+decodeFoldStateN :: forall s st. Int -> (st -> Decoder s st) -> st -> Decoder s st
+decodeFoldStateN n0 step z0 =
+  Decoder
+    ( \bsl v ->
+        let goC :: Int -> st -> C.Decoder s st
+            goC 0 st = pure st
+            goC k st = runDecoder (step st) bsl v >>= goC (k - 1)
+         in goC n0 z0
+    )
+    ( \v bs off0 ->
+        let goD :: Int -> st -> Int -> ST s (DRes st)
+            goD 0 st !off = pure (DOk off st)
+            goD k st !off =
+              runDirect (step st) v bs off >>= \case
+                DBail -> pure DBail
+                DOk off' st' -> goD (k - 1) st' off'
+         in goD n0 z0 off0
+    )
+{-# INLINE decodeFoldStateN #-}
+
+-- | @decodeFoldStateIndef step z@ is `decodeFoldStateN` for an indefinite-length
+-- container: before each run of @step@ it reads `decodeBreakOr`, and stops at the
+-- break. The same as
+--
+-- > go st = decodeBreakOr >>= \stop -> if stop then pure st else step st >>= go
+decodeFoldStateIndef :: forall s st. (st -> Decoder s st) -> st -> Decoder s st
+decodeFoldStateIndef step z0 =
+  Decoder
+    ( \bsl v ->
+        let goC :: st -> C.Decoder s st
+            goC st =
+              runDecoder decodeBreakOr bsl v >>= \stop ->
+                if stop then pure st else runDecoder (step st) bsl v >>= goC
+         in goC z0
+    )
+    ( \v bs off0 ->
+        let goD :: st -> Int -> ST s (DRes st)
+            goD st !off =
+              runDirect decodeBreakOr v bs off >>= \case
+                DBail -> pure DBail
+                DOk off1 True -> pure (DOk off1 st)
+                DOk off1 False ->
+                  runDirect (step st) v bs off1 >>= \case
+                    DBail -> pure DBail
+                    DOk off2 st' -> goD st' off2
+         in goD z0 off0
+    )
+{-# INLINE decodeFoldStateIndef #-}
+
 decodeListLikeWithCountT ::
   forall t s a b.
   (MonadTrans t, Monad (t (Decoder s)), Monoid b) =>
@@ -1754,25 +1814,37 @@ decodeSequenceLenIndef :: (r -> a -> r) -> r -> (r -> b) -> Decoder s a -> Decod
 decodeSequenceLenIndef f z g dec =
   Decoder
     (\bsl v -> C.decodeSequenceLenIndef f z g (runDecoder dec bsl v))
-    -- cborg's decodeSequenceLenIndef, step for step, through this module's primitives
-    (runDirect (go z))
+    -- cborg's decodeSequenceLenIndef, step for step (break test, element forced,
+    -- accumulator forced on entry, result forced), written as a loop over the
+    -- offset so that no `Decoder` is built per element
+    (\v bs off0 -> go v bs z off0)
   where
-    go !acc =
-      decodeBreakOr >>= \stop ->
-        if stop
-          then pure $! g acc
-          else dec >>= \ !x -> go (f acc x)
+    go v bs = loop
+      where
+        loop !acc !off =
+          runDirect decodeBreakOr v bs off >>= \case
+            DBail -> pure DBail
+            DOk off1 True -> let !r = g acc in pure (DOk off1 r)
+            DOk off1 False ->
+              runDirect dec v bs off1 >>= \case
+                DBail -> pure DBail
+                DOk off2 x -> x `seq` loop (f acc x) off2
 {-# INLINE decodeSequenceLenIndef #-}
 
 decodeSequenceLenN :: (r -> a -> r) -> r -> (r -> b) -> Int -> Decoder s a -> Decoder s b
 decodeSequenceLenN f z g c dec =
   Decoder
     (\bsl v -> C.decodeSequenceLenN f z g c (runDecoder dec bsl v))
-    -- cborg's decodeSequenceLenN, step for step
-    (runDirect (go z c))
+    -- cborg's decodeSequenceLenN, step for step, written as a loop over the offset
+    (\v bs off0 -> go v bs z c off0)
   where
-    go !acc 0 = pure $! g acc
-    go !acc n = dec >>= \ !x -> go (f acc x) (n - 1 :: Int)
+    go v bs = loop
+      where
+        loop !acc 0 !off = let !r = g acc in pure (DOk off r)
+        loop !acc n !off =
+          runDirect dec v bs off >>= \case
+            DBail -> pure DBail
+            DOk off1 x -> x `seq` loop (f acc x) (n - 1 :: Int) off1
 {-# INLINE decodeSequenceLenN #-}
 
 decodeSimple :: Decoder s Word8
