@@ -16,6 +16,7 @@ mod research;
 mod rubric;
 mod rustpolicy;
 mod site;
+mod targets;
 
 /// Challenge builder: evaluate candidate problems, build and run challenges.
 #[derive(Parser)]

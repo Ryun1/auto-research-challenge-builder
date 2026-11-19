@@ -198,6 +198,7 @@ pub fn feed(root: &Path, slug: &str, url: &str, generated_at: &str) -> Result<Va
                    .map(|r| json!({"text": r.text, "reason": r.reason}))
                    .collect::<Vec<_>>()}),
     );
+    out.insert("targets".into(), json!(spec.targets));
     out.insert("submissions".into(), Value::Array(submissions));
     out.insert("directions".into(), Value::Array(directions));
     out.insert(

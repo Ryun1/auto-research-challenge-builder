@@ -39,3 +39,14 @@ outputs  = [".bin/candidate"]
 
 [inputs]
 salted = true  # seed drawn by the harness after the build, recorded after
+
+# External reference points shown on the site (#102). Context, never ranked:
+# the site words a comparison only when comparable = "exact".
+[[targets]]
+id         = "pallas"
+label      = "pallas (Rust)"
+source     = "This challenge's measure run 42721883592: Callgrind on the same 6 transaction pools"
+status     = "measured-here"
+comparable = "different"
+value      = 4.5
+note       = "About 22-25k instructions per transaction against the reference's 100-110k: 4.3x to 4.7x across the pools, 3.3x to 3.5x when pallas also hashes. A different language decoding into different structures, so it shows headroom, not a bar."

@@ -423,6 +423,7 @@ pub fn challenge(
         "submit_steps": submit_steps(&dir),
         "prompt": prompt(&dir),
         "context": context(&dir, slug),
+        "targets": spec.targets,
         "feed": has_feed.then(|| format!("feeds/{slug}.json")),
     }))
 }

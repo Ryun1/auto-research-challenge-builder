@@ -45,7 +45,10 @@ have a `DIRECTIONS.md`, kept by the maintainer: what has been tried and what is
 open. An optional `context.toml` says why the problem matters (the system
 around it, how often it runs, what an improvement is worth, sources); it is
 published on the site, so write it to be public. `cb new` writes a commented
-stub.
+stub. `[[targets]]` in `challenge.toml` lists outside reference points (another
+implementation measured here, or a published figure), each saying how the
+number was obtained and whether it is like for like; the site shows them as
+context and compares only like-for-like ones with the record.
 
 Results are published at https://ryun1.github.io/auto-research-challenges/,
 with a feed per challenge at `feeds/<slug>.json`.

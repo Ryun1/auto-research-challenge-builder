@@ -26,6 +26,9 @@ pub struct Spec {
     pub build_sandbox: Option<BuildSandbox>,
     #[serde(default)]
     pub inputs: Inputs,
+    /// External reference points shown on the site (#102).
+    #[serde(default)]
+    pub targets: Vec<crate::targets::Target>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -261,6 +264,10 @@ impl Spec {
                 return Err("perf: blocks > 0 and 0 < max_dispersion < 1".into());
             }
         }
+        let problems = crate::targets::check(&self.targets, &crate::targets::Kind::Simple);
+        if !problems.is_empty() {
+            return Err(problems.join("; "));
+        }
         Ok(())
     }
 }
@@ -338,6 +345,16 @@ min_improvement_bips = 100  # your call (100 = 1%); preflight warns if it's unde
 {perf}{rust}
 [inputs]
 salted = true  # seed drawn by the harness after the build, recorded after
+
+# External reference points shown on the site, never ranked (#102). Optional.
+# [[targets]]
+# id         = "other-impl"
+# label      = "Another implementation"
+# source     = "a citation, or the run that measured it here"
+# status     = "measured-here"  # measured-here | reported | derived | composite
+# comparable = "different"      # exact | comparable | different (only exact is compared with the record)
+# value      = 1.0              # in this challenge's metric
+# note       = "what makes it comparable or not"
 "#
     )
 }
