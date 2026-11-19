@@ -33,6 +33,12 @@ enum Family {
 }
 
 #[derive(Clone, Copy, ValueEnum)]
+enum ChallengeType {
+    Simple,
+    Research,
+}
+
+#[derive(Clone, Copy, ValueEnum)]
 enum Kit {
     Rust,
 }
@@ -42,8 +48,12 @@ enum Command {
     /// Scaffold challenges/<slug>/
     New {
         slug: String,
+        /// simple (one objective, a record) or research (an open space, a map)
+        #[arg(long = "type", value_enum, default_value = "simple")]
+        kind: ChallengeType,
+        /// Required for simple challenges
         #[arg(long)]
-        family: Family,
+        family: Option<Family>,
         #[arg(long)]
         kit: Option<Kit>,
         #[arg(long, default_value = "challenges")]
@@ -177,20 +187,32 @@ fn main() -> ExitCode {
         Command::Rank { dir } => candidate::rank(&dir).map(|table| print!("{table}")),
         Command::New {
             slug,
+            kind,
             family,
             kit,
             root,
-        } => {
-            let family = family.to_possible_value().unwrap();
-            let kit = kit.map(|k| k.to_possible_value().unwrap());
-            challenge::scaffold(
-                &root,
-                &slug,
-                family.get_name(),
-                kit.as_ref().map(|k| k.get_name()),
-            )
-            .map(|dir| println!("created {}", dir.display()))
+        } => match (kind, family) {
+            (ChallengeType::Research, None) if kit.is_none() => {
+                research::scaffold::scaffold(&root, &slug)
+            }
+            (ChallengeType::Research, _) => {
+                Err("--family and --kit are for simple challenges".into())
+            }
+            (ChallengeType::Simple, None) => {
+                Err("--family is required for simple challenges".into())
+            }
+            (ChallengeType::Simple, Some(family)) => {
+                let family = family.to_possible_value().unwrap();
+                let kit = kit.map(|k| k.to_possible_value().unwrap());
+                challenge::scaffold(
+                    &root,
+                    &slug,
+                    family.get_name(),
+                    kit.as_ref().map(|k| k.get_name()),
+                )
+            }
         }
+        .map(|dir| println!("created {}", dir.display())),
         Command::Preflight { slug, root, out } => run_preflight(&root.join(&slug), &out),
         Command::Site { dir, out } => {
             site::build(&dir, &out).map(|p| println!("wrote {} (internal only)", p.display()))
