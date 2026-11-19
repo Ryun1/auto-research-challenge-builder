@@ -106,7 +106,11 @@ pub fn sandbox_script(
          echo $$ > \"$cg/cgroup.procs\"\n\
          mount --bind {cwd} /mnt\n\
          mount -o remount,bind,ro /mnt\n\
-         mount -o remount,bind,ro /\n",
+         mount -o remount,bind,ro /\n\
+         while read -r _ _ _ _ mp _; do\n\
+           case \"$mp\" in */\\\\*|/|/mnt|/proc|/proc/*|/sys|/sys/*|/dev|/dev/*) continue;; esac\n\
+           mount -o remount,bind,ro \"$mp\" 2>/dev/null || true\n\
+         done < /proc/self/mountinfo\n",
         statusdir = sq(&status_dir.display().to_string()),
         cg = sq(&format!("/sys/fs/cgroup/cb-participant-{unique}")),
         // The shell and `timeout` live in the cgroup too.
@@ -675,19 +679,19 @@ mod tests {
             );
         }
         // Run 2: nothing from run 1 is visible, and nothing else is writable.
-        let allowed = SEEN
-            .iter()
-            .map(|d| format!("-e {d}"))
-            .collect::<Vec<_>>()
-            .join(" ");
         let check = format!(
             "m={marker}; for d in {dirs} \"$HOME\"; do \
                [ ! -e \"$d/$m\" ] || {{ echo \"state leaked in $d\" >&2; exit 31; }}; done; \
              if command -v ipcs >/dev/null; then \
                [ -z \"$(ipcs -m | awk '$3==\"nobody\" || $3==\"65534\"')\" ] \
                  || {{ ipcs -m >&2; exit 32; }}; fi; \
-             bad=$(timeout 240 find / /run /dev -xdev -type d -writable 2>/dev/null \
-                   | sort | grep -vxF {allowed} || true); \
+             bad=; \
+             while read -r _ _ _ _ mp _; do \
+               case \"$mp\" in /proc|/proc/*|/sys|/sys/*) continue;; esac; \
+               for a in {dirs}; do [ \"$mp\" != \"$a\" ] || continue 2; done; \
+               bad=\"$bad$(timeout 60 find \"$mp\" -xdev -maxdepth 6 -type d -writable 2>/dev/null)\"; \
+             done < /proc/self/mountinfo; \
+             if ( : > /cb-probe ) 2>/dev/null; then bad=\"$bad /(writable)\"; fi; \
              if [ -n \"$bad\" ]; then \
                printf 'unexpected writable dirs:\\n%s\\n' \"$bad\" >&2; exit 33; fi; \
              exit 0"
