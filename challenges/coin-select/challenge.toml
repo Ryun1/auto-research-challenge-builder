@@ -1,7 +1,7 @@
 [challenge]
 slug   = "coin-select"
 type   = "research"
-status = "draft"            # draft | open | closed
+status = "open"             # draft | open | closed
 runner = "ubuntu-24.04"     # pinned image
 
 [commands]
