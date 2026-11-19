@@ -1,4 +1,5 @@
 pub mod comment;
+pub mod feed;
 pub mod gate;
 pub mod measure;
 pub mod participant;
