@@ -34,3 +34,55 @@ pub fn toy(root: &Path, slug: &str, judge: &str) -> PathBuf {
     put(&b.join("answer"), "42\n", 0o644);
     dir
 }
+
+/// Answers every question in THREAT_MODEL.md.
+pub fn answer_threat_model(dir: &Path) {
+    let p = dir.join("THREAT_MODEL.md");
+    let t = std::fs::read_to_string(&p).unwrap();
+    let out: String = t
+        .lines()
+        .map(|l| {
+            if l.trim().starts_with("- ") && l.trim().ends_with(':') {
+                format!("{l} answered in the toy\n")
+            } else {
+                format!("{l}\n")
+            }
+        })
+        .collect();
+    std::fs::write(&p, out).unwrap();
+}
+
+/// One broken variant: a whole submission whose `answer` is `answer`.
+pub fn broken(dir: &Path, name: &str, answer: &str) {
+    let b = dir.join("preflight/broken").join(name);
+    put(
+        &b.join("submission.toml"),
+        &format!(
+            "id = \"{name}\"\ncontract = \"main@1\"\nnovelty = \"new\"\ndirection = \"{name}\"\nsummary = \"broken variant {name}\"\n"
+        ),
+        0o644,
+    );
+    put(&b.join("build.sh"), "#!/usr/bin/env bash\nexit 0\n", 0o755);
+    put(&b.join("answer"), &format!("{answer}\n"), 0o644);
+}
+
+/// The four required broken variants (self-report claims fake numbers but answers 42).
+pub fn broken_all(dir: &Path) {
+    broken(dir, "off-by-one", "41");
+    broken(dir, "partial", "0");
+    broken(dir, "constant", "7");
+    broken(dir, "self-report", "42");
+    put(
+        &dir.join("preflight/broken/self-report/self-report.txt"),
+        "time_ms=0.001 size_bytes=1\n",
+        0o644,
+    );
+}
+
+/// A toy ready to launch: threat model answered, broken variants in place.
+pub fn toy_ready(root: &Path, slug: &str, judge: &str) -> PathBuf {
+    let dir = toy(root, slug, judge);
+    answer_threat_model(&dir);
+    broken_all(&dir);
+    dir
+}

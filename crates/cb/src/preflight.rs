@@ -51,7 +51,7 @@ impl Report {
         self.checks.iter().any(|c| c.status == Status::Fail)
     }
 
-    fn push(&mut self, name: &str, status: Status, detail: impl Into<String>) {
+    pub(crate) fn push(&mut self, name: &str, status: Status, detail: impl Into<String>) {
         self.checks.push(Check {
             name: name.into(),
             status,
@@ -477,7 +477,7 @@ pub(crate) fn metrics(r: &Run) -> Option<Value> {
     v.get("metrics").filter(|m| m.is_object()).cloned()
 }
 
-fn max_child_rss_gb() -> f64 {
+pub(crate) fn max_child_rss_gb() -> f64 {
     // SAFETY: getrusage writes into the zeroed struct we pass.
     let mut u: libc::rusage = unsafe { std::mem::zeroed() };
     unsafe { libc::getrusage(libc::RUSAGE_CHILDREN, &mut u) };
@@ -572,7 +572,7 @@ fn fact(ok: bool, secs: f64) -> Fact {
 
 /// Unanswered template lines: a `- question:` bullet with nothing after it,
 /// or a `## section` with no text before the next heading.
-fn threat_model_gaps(text: &str) -> Vec<String> {
+pub(crate) fn threat_model_gaps(text: &str) -> Vec<String> {
     let mut gaps = Vec::new();
     let mut section: Option<(&str, bool)> = None;
     for line in text.lines().chain(std::iter::once("## end")) {
@@ -594,6 +594,9 @@ fn threat_model_gaps(text: &str) -> Vec<String> {
 }
 
 pub fn run_all(dir: &Path) -> Result<Report, String> {
+    if crate::challenge::challenge_type(dir)? == "research" {
+        return crate::research::preflight::run_all(dir);
+    }
     let spec = Spec::load(dir)?;
     let seed = seed();
     // [perf] settings reach the harness as env (the Rust kit reads these).

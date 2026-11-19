@@ -9,7 +9,6 @@ use serde_json::{json, Map, Value};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-#[allow(dead_code)] // Dir: used by later workflow tasks
 pub enum Source<'a> {
     /// A gate export dir (`<dir>/<root name>/<slug>/submissions/<id>`).
     Export(&'a Path),

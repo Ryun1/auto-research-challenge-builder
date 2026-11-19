@@ -2,6 +2,7 @@ pub mod comment;
 pub mod gate;
 pub mod measure;
 pub mod participant;
+pub mod preflight;
 pub mod record;
 pub mod results;
 pub mod scaffold;
