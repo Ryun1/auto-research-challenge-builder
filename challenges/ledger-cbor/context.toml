@@ -1,0 +1,64 @@
+# Why this challenge matters, shown on the public site (#101). Maintainer-owned;
+# the site is public, so everything here is written to be published. Decoding's
+# share of a node's CPU is not known here, so no node-level saving is claimed.
+
+one_line = "Make cardano-ledger decode Cardano transactions in fewer CPU instructions, without changing what it accepts."
+
+stakes = """Every Conway transaction that reaches a Cardano node arrives as CBOR bytes and is decoded by cardano-ledger before the node can validate it, and its fields are decoded again when the node applies the block that contains it. That decoder sits on consensus-critical code, so a faster decoder is only worth having if it accepts and rejects exactly the same bytes as today's. A Rust decoder decodes the same transactions in about 4.5x fewer instructions, which suggests there is room."""
+
+why_this_instance = """Each CI run decodes 800 transactions sampled from recent mainnet blocks fetched for that run (protocol version 11, Conway era) as mempool transactions: decodeFullAnnotator into MempoolTx ConwayEra, then fully evaluated. Correctness is checked against the pinned reference on every input, including truncated, bit-flipped, extended and re-tagged mutants. The results say nothing about older eras, ledger-state decoding, the block's own framing or wall time on a running node."""
+
+cautions = [
+  "The score counts CPU instructions under Callgrind, not wall time. A paired wall-time check only rejects a candidate whose wall-time speedup is below 0.92.",
+  "Only the mempool path is timed. A transaction in a block has a different serialization; the block decoder reuses the same field decoders (transaction bodies, outputs, values, witnesses), but its own framing is not measured.",
+  "Decoding is one part of what a node does per transaction and per block; its share of a node's CPU is not known here, so no node-level saving is claimed.",
+  "Upstream's test suites for the alonzo, babbage and conway packages are not run on promotion yet (they do not fit the runner's time limits).",
+  "pallas decodes into different structures in a different language: its instruction count shows headroom, not a target.",
+]
+
+sources = [
+  "cardano-ledger @ 7827506, libs/cardano-ledger-core/src/Cardano/Ledger/MempoolTx/Internal.hs: MempoolTx is 'a top-level transaction as it is received by the mempool'; mempool and block transactions do not share a serialization",
+  "cardano-ledger @ 7827506, eras/alonzo/impl/src/Cardano/Ledger/Alonzo/BlockBody/Internal.hs and eras/conway/impl/src/Cardano/Ledger/Conway/BlockBody.hs (BlockBody ConwayEra = AlonzoBlockBody ConwayEra): block bodies decode transaction bodies and witnesses with the same decoders",
+  "Ouroboros Consensus, Components' Data Flow: https://ouroboros-consensus.cardano.intersectmbo.org/docs/explanations/data_flow",
+  "Mainnet Shelley genesis (activeSlotsCoeff 0.05, slotLength 1): https://book.world.dev.cardano.org/environments/mainnet/shelley-genesis.json",
+  "This challenge's corpus: 1,633 transactions from 150 uniformly sampled mainnet blocks, epochs 645 to 666 (corpus/pool.json)",
+  "This challenge's measure run 42721883592 (reference profile and pallas comparison)",
+]
+
+[[flow]]
+label  = "Submitted"
+detail = "A wallet submits the transaction to a node (local tx-submission), and nodes pass it to their peers (node-to-node TxSubmission)."
+
+[[flow]]
+label          = "Decoded"
+detail         = "Each node decodes the transaction's CBOR into a MempoolTx with cardano-ledger. This is the decoder this challenge makes faster."
+this_challenge = true
+
+[[flow]]
+label  = "Validated and held"
+detail = "The mempool validates the transaction against the current ledger state and rejects it if it is invalid."
+
+[[flow]]
+label  = "Forged into a block"
+detail = "A slot leader takes transactions from its mempool into a new block."
+
+[[flow]]
+label  = "Block applied on every node"
+detail = "Peers fetch the block, decode it (reusing the same field decoders for each transaction's body and witnesses) and apply it to the ledger; the mempool is then revalidated."
+
+[calls]
+value  = "Every transaction, at every node whose mempool it enters; its fields again on every node that applies its block"
+basis  = "About 4,320 blocks a day (86,400 one-second slots × activeSlotsCoeff 0.05) × about 10.9 transactions per block (1,633 in 150 uniformly sampled mainnet blocks) ≈ 47,000 transactions a day (our estimate)."
+source = "Ouroboros Consensus data-flow docs (mempool and block paths); mainnet Shelley genesis; this challenge's corpus"
+
+[[value_levers]]
+statement   = "On the same mainnet transactions, pallas (Rust) needs about 4.5x fewer instructions than cardano-ledger's decoder, so the Haskell decoder is far from a floor. In the reference profile the editable packages run about a quarter of the instructions directly and the GHC runtime another 38%, much of it closure application and allocation that the decoders' shape decides."
+quantity    = "pallas: ≈ 4.5x fewer instructions"
+source      = "This challenge's measure run 42721883592 (Callgrind, same transactions)"
+is_estimate = false
+
+[[value_levers]]
+statement   = "A faster field decoder (transaction bodies, outputs, values) also speeds up decoding blocks, because the block body decoder calls the same instances, though only the mempool path is measured here."
+quantity    = "same decoders on the block path"
+source      = "cardano-ledger @ 7827506: AlonzoBlockBody's decoder (used by Conway) decodes bodies and witnesses with the same decCBOR instances"
+is_estimate = false
