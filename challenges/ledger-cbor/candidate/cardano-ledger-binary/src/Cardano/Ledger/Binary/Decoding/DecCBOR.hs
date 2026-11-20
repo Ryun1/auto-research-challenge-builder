@@ -553,7 +553,8 @@ instance (DSIGNAlgorithm v, Typeable a) => DecCBOR (SignedDSIGN v a) where
 --------------------------------------------------------------------------------
 
 instance KnownNat n => DecCBOR (PackedBytes n) where
-  decCBOR = decCBOR >>= packByteString
+  -- Evaluated before it is returned: `packByteString` ends in a lazy `pure`.
+  decCBOR = decCBOR >>= packByteString >>= \pb -> pure $! pb
   {-# INLINE decCBOR #-}
 
 instance (HashAlgorithm h, Typeable a) => DecCBOR (Hash h a) where
