@@ -20,13 +20,23 @@ decides. pallas (Rust) decodes the same txs in ~4.5x fewer instructions.
 | `packages.txt` | which packages, and where each lives upstream |
 | `harness/` | judge exe, built against the reference and against the candidate |
 | `corpus/pool.hex.gz` | 1,633 mainnet Conway txs (Koios, epochs 645-666, PV 11); see `pool.json` |
+| `corpus/tricky.hex.gz` | up to 200 curated mainnet hard cases, verified on every run, never timed: governance proposals and votes, Conway certs, Plutus V1-V3, the largest txs, Byron addresses, indefinite-length and untagged sets, older protocol versions. `tricky.json` lists each one's tags; `verifier/tricky.py` rebuilds it |
 | `verifier/judge.py` | verify (values, bytes, accept/reject parity) and score |
 | `preflight/broken/` | off-by-one (accepts 1 trailing byte), partial (gives up on txs > 1000 bytes), constant (rejects all), lazy (leaves every output unevaluated behind its own `rnf`) |
 
 **Correct** means the same as the pristine reference on every input: the same
 `show` of the decoded tx, the same re-encoded bytes, and the same accept/reject
 on truncated, bit-flipped, extended and re-tagged mutants. A decoder that
-accepts more is a consensus bug, not a speedup.
+accepts more is a consensus bug, not a speedup. Each run verifies every tx in
+the pool, 600 seeded mutants of pool txs, every hard case in
+`corpus/tricky.hex.gz` plus one seeded mutant of each, and 4 edge cases. A
+pool tx the reference rejects is an infra failure. A hard case the reference
+rejects (some are from older protocol versions) only needs the same answer. The
+hard cases don't yet include committee hot-key or resignation certs, the
+combined delegation certs (10-12), treasury donations, phase-2-invalid txs,
+pointer addresses or no-confidence proposals: no Koios query finds them
+(`missing_tags` in `tricky.json`), so only a fresh pool that happens to hold
+one checks those paths.
 
 The txs that get timed are verified too, with the same seed. And because the
 timed pass forces a decoded tx with `rnf`, whose instance for `Sized` is in
