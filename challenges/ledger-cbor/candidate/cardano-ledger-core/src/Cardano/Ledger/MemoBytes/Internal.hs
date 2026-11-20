@@ -231,11 +231,18 @@ mkMemoBytesShort t sbs =
 
 -- | Same as `mkMemoBytes`, but immediately makes a copy of the original bytes, in order to ensure
 -- that potentially much larger source `LazyByteString` is not retained in memory.
-mkMemoBytesForce :: t -> BSL.ByteString -> MemoBytes t
+mkMemoBytesForce :: forall t. t -> BSL.ByteString -> MemoBytes t
 mkMemoBytesForce t bsl =
   -- Note: we cannot simply use `toStrict` here, since it does not guarantee a copy, which is why we
   -- must convert it to a `ShortByteString` and ensure it is fully evaluated.
-  mkMemoBytesShort t $! toShort $ BSL.toStrict bsl
+  --
+  -- The hash is computed here, from the strict bytes the copy is made from (the same bytes),
+  -- instead of being left as a thunk that copies the `ShortByteString` back into a pinned
+  -- buffer when `rnf` (or anything else) first demands it.
+  let bs = BSL.toStrict bsl
+      sbs = toShort bs
+      hash = makeHashWithExplicitProxys (Proxy @(MemoHashIndex t)) bs
+   in sbs `seq` hash `seq` MemoBytes t sbs hash
 
 -- | Create MemoBytes from its CBOR encoding
 --

@@ -553,7 +553,8 @@ instance (DSIGNAlgorithm v, Typeable a) => DecCBOR (SignedDSIGN v a) where
 --------------------------------------------------------------------------------
 
 instance KnownNat n => DecCBOR (PackedBytes n) where
-  decCBOR = decCBOR >>= packByteString
+  -- Evaluated before it is returned: `packByteString` ends in a lazy `pure`.
+  decCBOR = decCBOR >>= packByteString >>= \pb -> pure $! pb
   {-# INLINE decCBOR #-}
 
 instance (HashAlgorithm h, Typeable a) => DecCBOR (Hash h a) where
@@ -685,7 +686,9 @@ deriving instance DecCBOR EpochInterval
 --------------------------------------------------------------------------------
 
 instance DecCBOR PV1.Data where
-  decCBOR = fromPlainDecoder decode
+  -- plutus-core's decoder, with a direct form that reads the value in one loop
+  -- ('withDirectDataTree') instead of running cborg over the rest of the input.
+  decCBOR = withDirectDataTree PV1.Constr PV1.Map PV1.List PV1.I PV1.B (fromPlainDecoder decode)
   {-# INLINE decCBOR #-}
 
 instance DecCBOR PV1.ScriptContext where
