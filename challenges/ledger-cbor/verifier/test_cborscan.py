@@ -1,7 +1,9 @@
 """Tests for cborscan.features: python3 -m unittest discover -s verifier -p 'test_*.py'"""
 import unittest
 
-from cborscan import TAGS, features
+import hashlib
+
+from cborscan import TAGS, body_hash, features
 
 
 class T:
@@ -119,6 +121,16 @@ class Features(unittest.TestCase):
                             wits={3: [], 7: []}, valid=False))
         seen |= features(b"")
         self.assertTrue(seen <= set(TAGS), seen - set(TAGS))
+
+
+class BodyHash(unittest.TestCase):
+    def test_hash_of_raw_body_bytes(self):
+        b = body(k0=T(258, Indef([TXIN])))
+        want = hashlib.blake2b(enc(b), digest_size=32).hexdigest()
+        self.assertEqual(body_hash(tx(b)), want)
+
+    def test_garbage_is_none(self):
+        self.assertIsNone(body_hash(b"\x9f"))
 
 
 if __name__ == "__main__":

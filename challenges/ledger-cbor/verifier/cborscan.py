@@ -8,6 +8,8 @@ elements). Shapes it doesn't expect are skipped, never raised: the point is to
 find txs worth verifying, not to validate them.
 """
 
+import hashlib
+
 BODY_KEYS = {5: "withdrawals", 8: "validity-start", 9: "mint", 14: "required-signers",
              16: "collateral-return", 18: "ref-inputs", 21: "treasury-value", 22: "donation"}
 WIT_KEYS = {1: "native-script", 2: "bootstrap-witness", 3: "plutus-v1", 4: "datums",
@@ -116,6 +118,19 @@ def decode(b):
     if r.i != len(b):
         raise ValueError("trailing bytes")
     return v, r.seen
+
+
+def body_hash(tx):
+    """The tx id: blake2b-256 of the body's bytes as encoded, or None if unreadable."""
+    r = Reader(tx)
+    try:
+        if r.byte() >> 5 != 4:
+            return None
+        start = r.i
+        r.item()
+    except (ValueError, IndexError, RecursionError):
+        return None
+    return hashlib.blake2b(tx[start : r.i], digest_size=32).hexdigest()
 
 
 def elems(v):
