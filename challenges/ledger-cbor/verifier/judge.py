@@ -1,6 +1,9 @@
 """Judge for ledger-cbor: `judge.py verify` and `judge.py score`.
 
-Inputs are drawn from corpus/pool.hex.gz with CB_SEED, after the build.
+verify checks every tx in the pool (corpus/fresh.hex.gz in CI, else
+corpus/pool.hex.gz), 600 CB_SEED mutants of pool txs, the committed hard cases
+(corpus/tricky.*, curated by tricky.py) with one seeded mutant each, and 4 edge
+cases. score times 800 pool txs drawn with CB_SEED, all of which verify checked.
 .bin/reference is the pristine cardano-ledger-binary build, .bin/candidate the submission.
 """
 import gzip, json, os, random, re, statistics, subprocess, sys, tempfile
@@ -8,7 +11,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 REF, CAND = ROOT / ".bin/reference", ROOT / ".bin/candidate"
-VALID_N, MUTANT_N, SCORE_N, WALL_REPS = 600, 300, 800, 5
+MUTANT_N, SCORE_N, WALL_REPS = 600, 800, 5
 WALL_ATTEMPTS = 3  # the paired wall-time measurement is repeated only while it is unstable
 
 
@@ -33,6 +36,16 @@ def pool_label():
 def pool():
     with gzip.open(pool_path(), "rt") as f:
         return [bytes.fromhex(l) for l in f.read().split()]
+
+
+def tricky(path=ROOT / "corpus/tricky.hex.gz"):
+    """The committed hard cases. Raises ValueError if the hex and its json disagree."""
+    with gzip.open(path, "rt") as f:
+        txs = [bytes.fromhex(l) for l in f.read().split()]
+    meta = json.loads(path.with_name("tricky.json").read_text())
+    if len(txs) != len(meta["txs"]):
+        raise ValueError(f"{path.name} has {len(txs)} txs, tricky.json {len(meta['txs'])}")
+    return txs
 
 
 def write(txs):
@@ -73,24 +86,39 @@ def nf(line):
     return (int(m.group(1)), int(m.group(2))) if m else None
 
 
-def verify(seed):
-    rng, p = random.Random(seed), pool()
-    cases = [("valid", t) for t in rng.sample(p, VALID_N)]
-    cases += [mutate(rng, t) for t in rng.sample(p, MUTANT_N)]
+def build_cases(seed, p, hard):
+    """(kind, input) pairs for verify: every pool tx, seeded pool mutants, the hard
+    cases and one seeded mutant of each, then the edge cases. The txs score() times
+    are pool txs, so they are among the valid cases."""
+    rng = random.Random(seed)
+    cases = [("valid", t) for t in p]
+    cases += [mutate(rng, t) for t in rng.sample(p, min(MUTANT_N, len(p)))]
+    cases += [("tricky", t) for t in hard]
+    cases += [("tricky-" + k, m) for k, m in (mutate(rng, t) for t in hard)]
     by_len = sorted(p, key=len)
-    cases += [("edge", b""), ("edge", b"\x00"), ("edge", by_len[0]), ("edge", by_len[-1])]
-    # The txs score() will time with this seed: their digests are checked too, so
-    # the timed inputs are known to decode to the reference's values.
-    cases += [("scored", t) for t in score_sample(seed, p)]
+    return cases + [("edge", b""), ("edge", b"\x00"), ("edge", by_len[0]), ("edge", by_len[-1])]
+
+
+def verify(seed):
+    try:
+        hard = tricky()
+    except (OSError, ValueError, KeyError) as e:
+        return {"ok": False, "infra": True, "detail": f"infra: hard-case corpus: {e}"}
+    cases = build_cases(seed, pool(), hard)
     path = write([t for _, t in cases])
     ref, cand = lines(REF, "digest", path), lines(CAND, "digest", path)
-    if any(not r.startswith("ok ") for (k, _), r in zip(cases, ref) if k in ("valid", "scored")):
+    # A pool tx is a mainnet tx at PV 11: the reference must accept it. Hard cases
+    # include older-era txs it may reject; for those only parity counts.
+    if any(not r.startswith("ok ") for (k, _), r in zip(cases, ref) if k == "valid"):
         return {"ok": False, "infra": True, "detail": "infra: reference rejected a mainnet tx"}
     if len(cand) != len(cases):
         return {"ok": False, "detail": f"candidate printed {len(cand)} lines for {len(cases)} inputs"}
     bad = [(i, k, r, c) for i, ((k, _), r, c) in enumerate(zip(cases, ref, cand)) if r != c]
     rejected = sum(not r.startswith("ok ") for r in ref)
-    detail = f"{pool_label()}: {len(cases)} inputs ({rejected} rejected by reference): {len(bad)} differ"
+    hard_ok = sum(r.startswith("ok ") for (k, _), r in zip(cases, ref) if k == "tricky")
+    detail = (f"{pool_label()}: {len(cases)} inputs ({rejected} rejected by reference; whole pool, "
+              f"includes the {SCORE_N} scored txs; tricky: {hard_ok} accepted, "
+              f"{len(hard) - hard_ok} rejected by reference): {len(bad)} differ")
     if bad:
         detail += "; first: " + ", ".join(f"#{i} {k} ref={r[:12]} cand={c[:12]}" for i, k, r, c in bad[:3])
 
