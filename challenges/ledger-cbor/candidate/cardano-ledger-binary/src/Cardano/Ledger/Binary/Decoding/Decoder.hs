@@ -20,6 +20,7 @@ module Cardano.Ledger.Binary.Decoding.Decoder (
   originalBytesExpectedFailureMessage,
   decodeDirectFastPath,
   plainWithDirect,
+  withDirectTree,
   DecoderError (..),
   C.ByteOffset,
   ByteArray (..),
@@ -470,6 +471,96 @@ directPeek d p =
 plainWithDirect :: C.Decoder s a -> Decoder s a -> Decoder s a
 plainWithDirect plain (Decoder _ dd) = Decoder (\_ _ -> plain) dd
 {-# INLINE plainWithDirect #-}
+
+-- | Give a decoder of a tree of CBOR integers, definite byte and text strings, and
+-- definite or indefinite lists and maps (a 'Metadatum'-shaped value) a direct form
+-- that reads the whole tree in one pure loop, instead of the direct form its monadic
+-- definition builds (a `Decoder` per node).
+--
+-- The callbacks build the value of each node; the byte and text callbacks may
+-- decline (`Nothing`), as may the loop on any other token or encoding. On any
+-- decline the decoder's own direct form is run from the same offset instead, so
+-- this answers `DOk` only with what that form answers on the same bytes, provided
+-- the callbacks build the values the decoder builds: integers as `decodeInteger`
+-- reads them, byte strings as `decodeByteArray` and text strings as `decodeString`
+-- read definite ones, lists and maps of the nodes in input order. Every node's value
+-- is evaluated before it is put in its parent, and each list's spine is built
+-- before the list is passed on.
+withDirectTree ::
+  (Integer -> a) ->
+  (Version -> ByteArray -> Maybe a) ->
+  (Version -> Text.Text -> Maybe a) ->
+  ([a] -> a) ->
+  ([(a, a)] -> a) ->
+  Decoder s a ->
+  Decoder s a
+withDirectTree fInt fBytes fText fList fMap (Decoder dc dd) =
+  Decoder
+    dc
+    ( \v bs off -> case node v bs off of
+        DOk off' x -> pure (DOk off' x)
+        DBail -> dd v bs off
+    )
+  where
+    node v bs off
+      | not (dOkOff bs off) = DBail
+      | otherwise =
+          let !h = BS.index bs off
+           in case h `shiftR` 5 of
+                0 -> int bs off
+                1 -> int bs off
+                2 -> case dByteArray bs off of
+                  DOk off' ba -> done off' (fBytes v ba)
+                  DBail -> DBail
+                3 -> case dString bs off of
+                  DOk off' t -> done off' (fText v t)
+                  DBail -> DBail
+                4
+                  | h == 0x9f -> listIndef v bs (off + 1) []
+                  | otherwise -> case dListLen bs off of
+                      DOk off' n -> listN v bs off' n []
+                      DBail -> DBail
+                5
+                  | h == 0xbf -> mapIndef v bs (off + 1) []
+                  | otherwise -> case dMapLen bs off of
+                      DOk off' n -> mapN v bs off' n []
+                      DBail -> DBail
+                _ -> DBail
+    int bs off = case dInteger bs off of
+      DOk off' i -> let !x = fInt i in DOk off' x
+      DBail -> DBail
+    done off' = \case
+      Just x -> x `seq` DOk off' x
+      Nothing -> DBail
+    listOf off acc = let !xs = reverse acc; !x = fList xs in DOk off x
+    mapOf off acc = let !xs = reverse acc; !x = fMap xs in DOk off x
+    listN v bs !off !n acc
+      | n == 0 = listOf off acc
+      | otherwise = case node v bs off of
+          DOk off' e -> listN v bs off' (n - 1) (e : acc)
+          DBail -> DBail
+    listIndef v bs !off acc = case dBreakOr bs off of
+      DOk off' True -> listOf off' acc
+      DOk _ False -> case node v bs off of
+        DOk off' e -> listIndef v bs off' (e : acc)
+        DBail -> DBail
+      DBail -> DBail
+    mapN v bs !off !n acc
+      | n == 0 = mapOf off acc
+      | otherwise = case node v bs off of
+          DOk off1 k -> case node v bs off1 of
+            DOk off2 e -> mapN v bs off2 (n - 1) ((k, e) : acc)
+            DBail -> DBail
+          DBail -> DBail
+    mapIndef v bs !off acc = case dBreakOr bs off of
+      DOk off' True -> mapOf off' acc
+      DOk _ False -> case node v bs off of
+        DOk off1 k -> case node v bs off1 of
+          DOk off2 e -> mapIndef v bs off2 ((k, e) : acc)
+          DBail -> DBail
+        DBail -> DBail
+      DBail -> DBail
+{-# INLINE withDirectTree #-}
 
 -- | Try to decode a whole strict input with the direct form of the decoder.
 -- `Nothing` means no answer: decode with `toPlainDecoder` instead. `Just` is

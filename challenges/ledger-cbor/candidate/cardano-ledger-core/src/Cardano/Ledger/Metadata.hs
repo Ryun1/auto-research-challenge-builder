@@ -38,6 +38,7 @@ import Cardano.Ledger.Binary (
   natVersion,
   peekTokenType,
   unBA,
+  withDirectTree,
  )
 import Cardano.Ledger.Orphans ()
 import Control.Applicative ((<|>))
@@ -80,7 +81,17 @@ instance EncCBOR Metadatum where
   encCBOR = encodeMetadatum
 
 instance DecCBOR Metadatum where
-  decCBOR = decodeMetadatum
+  -- The direct form reads the whole tree in one loop ('withDirectTree'); the
+  -- callbacks build what 'decodeMetadatum' builds, with its size checks (a string
+  -- over 64 bytes declines, and 'decodeMetadatum' then decides).
+  decCBOR =
+    withDirectTree
+      I
+      (\dv ba -> if dv > natVersion @2 && Prim.sizeofByteArray (unBA ba) > 64 then Nothing else Just (B (unBA ba)))
+      (\dv x -> if dv > natVersion @2 && TF.lengthWord8 x > 64 then Nothing else Just (S x))
+      List
+      Map
+      decodeMetadatum
 
 instance ToJSON Metadatum where
   toJSON = \case
