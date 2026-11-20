@@ -90,6 +90,9 @@ class Reader:
             if major == 5:
                 out[-1] = (out[-1], self.item())
         self.byte()  # break
+        want = {2: bytes, 3: str}.get(major)
+        if want and not all(isinstance(c, want) for c in out):
+            raise ValueError("indefinite string chunk of another type")
         if major == 2:
             return b"".join(out)
         if major == 3:

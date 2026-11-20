@@ -102,7 +102,7 @@ def build_cases(seed, p, hard):
 def verify(seed):
     try:
         hard = tricky()
-    except (OSError, ValueError, KeyError) as e:
+    except Exception as e:  # any unreadable committed corpus is the judge's fault, not the candidate's
         return {"ok": False, "infra": True, "detail": f"infra: hard-case corpus: {e}"}
     cases = build_cases(seed, pool(), hard)
     path = write([t for _, t in cases])

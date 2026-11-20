@@ -111,7 +111,8 @@ class Features(unittest.TestCase):
         self.assertIn("withdrawals", f)
 
     def test_garbage(self):
-        for b in (b"", b"\x9f", b"\x80\x00"):
+        for b in (b"", b"\x9f", b"\x80\x00", b"\x5f\x01\xff", b"\x7f\x41\x00\xff",
+                  b"\x84\xa1\x00\x5f\x01\xff\xa0\xf5\xf6"):
             self.assertEqual(features(b), {"unparsed"}, b)
 
     def test_tags_vocabulary(self):
@@ -131,6 +132,7 @@ class BodyHash(unittest.TestCase):
 
     def test_garbage_is_none(self):
         self.assertIsNone(body_hash(b"\x9f"))
+        self.assertIsNone(body_hash(b"\x84\x5f\x01\xff"))
 
 
 if __name__ == "__main__":

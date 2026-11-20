@@ -120,6 +120,20 @@ class LoadTricky(unittest.TestCase):
             with self.assertRaises(ValueError):
                 judge.tricky(hexgz)
 
+    def test_corrupt_corpus_is_infra(self):
+        load = judge.tricky
+        with tempfile.TemporaryDirectory() as d:
+            hexgz = Path(d) / "tricky.hex.gz"
+            hexgz.write_bytes(gzip.compress(b"00\n" * 1000)[:20])  # truncated gzip: EOFError
+            (Path(d) / "tricky.json").write_text("[]")
+            saved = judge.pool, judge.tricky, judge.lines
+            judge.pool, judge.lines, judge.tricky = (lambda: POOL), FakeHarness(), (lambda: load(hexgz))
+            try:
+                r = judge.verify(7)
+            finally:
+                judge.pool, judge.tricky, judge.lines = saved
+        self.assertTrue(r.get("infra"), r)
+
     def test_committed_tricky_loads(self):
         hard = judge.tricky()
         self.assertTrue(1 <= len(hard) <= 200, len(hard))

@@ -31,7 +31,12 @@ accepts more is a consensus bug, not a speedup. Each run verifies every tx in
 the pool, 600 seeded mutants of pool txs, every hard case in
 `corpus/tricky.hex.gz` plus one seeded mutant of each, and 4 edge cases. A
 pool tx the reference rejects is an infra failure. A hard case the reference
-rejects (some are from older protocol versions) only needs the same answer.
+rejects (some are from older protocol versions) only needs the same answer. The
+hard cases don't yet include committee hot-key or resignation certs, the
+combined delegation certs (10-12), treasury donations, phase-2-invalid txs,
+pointer addresses or no-confidence proposals: no Koios query finds them
+(`missing_tags` in `tricky.json`), so only a fresh pool that happens to hold
+one checks those paths.
 
 The txs that get timed are verified too, with the same seed. And because the
 timed pass forces a decoded tx with `rnf`, whose instance for `Sized` is in
