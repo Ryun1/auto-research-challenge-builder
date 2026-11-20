@@ -51,7 +51,6 @@ import Cardano.Ledger.Binary (
   decodeFullDecoder',
   decodeNestedCborBytes,
   encodeTag,
-  fromPlainDecoder,
   fromPlainEncoding,
   ifDecoderVersionAtLeast,
   natVersion,
@@ -100,7 +99,8 @@ instance EncCBOR (PlutusData era) where
   encCBOR (PlutusData d) = fromPlainEncoding $ Cborg.encode d
 
 instance Typeable era => DecCBOR (Annotator (PlutusData era)) where
-  decCBOR = pure <$> fromPlainDecoder Cborg.decode
+  -- 'Cborg.decode' (the 'Serialise' instance) with the direct form of 'DecCBOR PV1.Data'.
+  decCBOR = pure . PlutusData <$> decodePlainData
 
 instance ToJSON (PlutusData era) where
   toJSON (PlutusData d) = plutusDataToJson d
@@ -230,7 +230,7 @@ instance Era era => DecCBOR (BinaryData era) where
 
 -- | The plain 'PV1.Data' decoder, the one 'DecCBOR (Annotator (PlutusData era))' wraps.
 decodePlainData :: Decoder s PV1.Data
-decodePlainData = fromPlainDecoder Cborg.decode
+decodePlainData = decCBOR
 
 -- | Construct `BinaryData` from a buffer of bytes, while ensuring that it can be later
 -- safely converted to `Data` with `binaryDataToData`

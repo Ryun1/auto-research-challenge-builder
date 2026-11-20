@@ -40,7 +40,6 @@ import Cardano.Ledger.Binary.Decoding.Decoder (
   decodeMapContentsTraverse,
   decodeNonEmptyList,
   decodeWithByteSpan,
-  fromPlainDecoder,
   getDecoderVersion,
   getOriginalBytes,
   setTag,
@@ -49,7 +48,6 @@ import Cardano.Ledger.Binary.Decoding.Decoder (
 import Cardano.Ledger.Binary.Encoding (EncCBOR, Version, serialize')
 import Cardano.Ledger.Binary.Version (natVersion)
 import Codec.CBOR.Read (ByteOffset)
-import qualified Codec.Serialise as Serialise (decode)
 import Control.DeepSeq (NFData)
 import Control.Monad
 import Data.Aeson (FromJSON (..), ToJSON (..))
@@ -303,5 +301,6 @@ decodeNonEmptyMapNoDuplicatesAnn decodeKey decodeValue = do
 {-# INLINE decodeNonEmptyMapNoDuplicatesAnn #-}
 
 instance DecCBOR (Annotator PV1.Data) where
-  decCBOR = pure <$> fromPlainDecoder Serialise.decode
+  -- 'Serialise.decode', with the direct form of 'DecCBOR PV1.Data'.
+  decCBOR = pure <$> decCBOR
   {-# INLINE decCBOR #-}

@@ -21,6 +21,7 @@ module Cardano.Ledger.Binary.Decoding.Decoder (
   decodeDirectFastPath,
   plainWithDirect,
   withDirectTree,
+  withDirectDataTree,
   DecoderError (..),
   C.ByteOffset,
   ByteArray (..),
@@ -561,6 +562,119 @@ withDirectTree fInt fBytes fText fList fMap (Decoder dc dd) =
         DBail -> DBail
       DBail -> DBail
 {-# INLINE withDirectTree #-}
+
+-- | Give a decoder of Plutus 'Data' (as plutus-core's @decodeData@ reads it) a direct
+-- form that reads the whole value in one pure loop, instead of running cborg over the
+-- rest of the chunk ('fromPlainDecoder').
+--
+-- On every node it reads what @decodeData@ reads, in the same order, and nothing
+-- else: integers of major type 0 and 1 (@decodeInteger@); definite byte strings of at
+-- most 64 bytes (@decodeBoundedBytes@); definite and indefinite lists and maps of
+-- nodes (@decodeListLenOrIndef@ / @decodeMapLenOrIndef@ and the sequence readers);
+-- tags 121-127 and 1280-1400 over a list of nodes, and tag 102 over a two-element
+-- array of a 'Word64' and a list of nodes (@decodeConstr@). It declines everything
+-- else -- bignums (tags 2 and 3), indefinite byte strings, any other tag or token,
+-- a byte string over 64 bytes, truncation -- and the decoder's own direct form is
+-- then run from the same offset. The callbacks build the nodes: a constructor
+-- index and its fields, a map's pairs and a list's elements in input order, an
+-- integer, a byte string. Every node is evaluated before it is put in its parent
+-- and every spine is built: the value is in normal form, as `rnf` leaves it.
+withDirectDataTree ::
+  (Integer -> [a] -> a) ->
+  ([(a, a)] -> a) ->
+  ([a] -> a) ->
+  (Integer -> a) ->
+  (ByteString -> a) ->
+  Decoder s a ->
+  Decoder s a
+withDirectDataTree fConstr fMap fList fInt fBytes (Decoder dc dd) =
+  Decoder
+    dc
+    ( \v bs off -> case node bs off of
+        DOk off' x -> pure (DOk off' x)
+        DBail -> dd v bs off
+    )
+  where
+    node bs off
+      | not (dOkOff bs off) = DBail
+      | otherwise =
+          let !h = BS.index bs off
+           in case h `shiftR` 5 of
+                0 -> int bs off
+                1 -> int bs off
+                2 -> case dBytes bs off of
+                  DOk off' b
+                    | BS.length b <= 64 -> let !x = fBytes b in DOk off' x
+                  _ -> DBail
+                4 -> case items bs off of
+                  DOk off' xs -> let !x = fList xs in DOk off' x
+                  DBail -> DBail
+                5 -> case pairs bs off of
+                  DOk off' kvs -> let !x = fMap kvs in DOk off' x
+                  DBail -> DBail
+                6
+                  | h == 0xc2 || h == 0xc3 -> DBail
+                  | otherwise -> case dTag64 bs off of
+                      DOk off1 t
+                        | t == 102 -> extended bs off1
+                        | 121 <= t && t < 128 -> constr (toInteger t - 121) bs off1
+                        | 1280 <= t && t < 1401 -> constr ((toInteger t - 1280) + 7) bs off1
+                      _ -> DBail
+                _ -> DBail
+    int bs off = case dInteger bs off of
+      DOk off' i -> let !x = fInt i in DOk off' x
+      DBail -> DBail
+    constr !i bs off = case items bs off of
+      DOk off' xs -> let !x = fConstr i xs in DOk off' x
+      DBail -> DBail
+    extended bs off = case dListLenOrIndef bs off of
+      DOk off1 len -> case dWord64 bs off1 of
+        DOk off2 w -> case items bs off2 of
+          DOk off3 xs -> case len of
+            Just 2 -> let !x = fConstr (toInteger w) xs in DOk off3 x
+            Nothing -> case dBreakOr bs off3 of
+              DOk off4 True -> let !x = fConstr (toInteger w) xs in DOk off4 x
+              _ -> DBail
+            _ -> DBail
+          DBail -> DBail
+        DBail -> DBail
+      DBail -> DBail
+    -- A list of nodes, definite or indefinite: the spine in input order.
+    items bs off = case dListLenOrIndef bs off of
+      DOk off' (Just n) -> itemsN bs off' n []
+      DOk off' Nothing -> itemsIndef bs off' []
+      DBail -> DBail
+    itemsN bs !off !n acc
+      | n == 0 = let !xs = reverse acc in DOk off xs
+      | otherwise = case node bs off of
+          DOk off' e -> itemsN bs off' (n - 1) (e : acc)
+          DBail -> DBail
+    itemsIndef bs !off acc = case dBreakOr bs off of
+      DOk off' True -> let !xs = reverse acc in DOk off' xs
+      DOk _ False -> case node bs off of
+        DOk off' e -> itemsIndef bs off' (e : acc)
+        DBail -> DBail
+      DBail -> DBail
+    pairs bs off = case dMapLenOrIndef bs off of
+      DOk off' (Just n) -> pairsN bs off' n []
+      DOk off' Nothing -> pairsIndef bs off' []
+      DBail -> DBail
+    pairsN bs !off !n acc
+      | n == 0 = let !kvs = reverse acc in DOk off kvs
+      | otherwise = case node bs off of
+          DOk off1 k -> case node bs off1 of
+            DOk off2 e -> pairsN bs off2 (n - 1) ((k, e) : acc)
+            DBail -> DBail
+          DBail -> DBail
+    pairsIndef bs !off acc = case dBreakOr bs off of
+      DOk off' True -> let !kvs = reverse acc in DOk off' kvs
+      DOk _ False -> case node bs off of
+        DOk off1 k -> case node bs off1 of
+          DOk off2 e -> pairsIndef bs off2 ((k, e) : acc)
+          DBail -> DBail
+        DBail -> DBail
+      DBail -> DBail
+{-# INLINE withDirectDataTree #-}
 
 -- | Try to decode a whole strict input with the direct form of the decoder.
 -- `Nothing` means no answer: decode with `toPlainDecoder` instead. `Just` is
