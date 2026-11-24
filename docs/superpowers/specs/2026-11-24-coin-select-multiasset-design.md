@@ -144,7 +144,7 @@ used and byte-match it; the judge then always picks the cheapest.
   payment + key stake). Payment destination addresses are generated per
   payment: 57-byte base, or 29-byte enterprise, or script base address
   (when the output carries a datum).
-- **size** = `len(cbor(tx))`; **min_fee** = `min_fee_a · size + min_fee_b`.
+- **size** = `len(cbor(tx)) - 1`: the ledger sizes `[body, wits, aux]` without the `is_valid` byte (Alonzo `toCBORForSizeComputation`, kept in Conway; found by the fixture check, 537 mainnet txs pay exactly 44 lovelace under `len(cbor(tx))`). **min_fee** = `min_fee_a · size + min_fee_b`; `max_tx_size` applies to the same size.
 - **min_ada(output)** = `(160 + len(cbor(output))) · coins_per_utxo_byte`.
   Because the output's own lovelace field is in its encoding, a change
   output is valid when `lovelace ≥ min_ada(that output, as encoded)`.

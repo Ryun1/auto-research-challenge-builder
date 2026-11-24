@@ -20,7 +20,7 @@ A dev-time `fixtures/fetch.py` pulls mainnet transactions from Koios into a comm
 
 - Judge-side code (`cbor.py`, `model.py`, `sim.py`, `judge`) is **stdlib only**. It imports nothing from `contracts/wallet/` (copy `HashRandom`).
 - Parameters: `min_fee_a 44`, `min_fee_b 155381`, `coins_per_utxo_byte 4310`, `max_tx_size 16384`, `max_val_size 5000`, `keys 8`.
-- `min_ada(output) = (160 + len(cbor(output))) * coins_per_utxo_byte`. `min_fee = min_fee_a * len(cbor(tx)) + min_fee_b`.
+- `min_ada(output) = (160 + len(cbor(output))) * coins_per_utxo_byte`. `min_fee = min_fee_a * fee_size(tx) + min_fee_b`, where `fee_size(tx) = len(cbor(tx)) - 1`: the ledger measures `[body, wits, aux]` without the `is_valid` byte (Alonzo `toCBORForSizeComputation`, also used by Conway; confirmed on 537 mainnet txs paying exactly 44 lovelace under the naive formula). `max_tx_size` is checked against the same `fee_size`.
 - **Judge form** (always the cheapest valid encoding):
   - tx is `[body, witness_set, true, null]`, body is `{0: inputs, 1: outputs, 2: fee}`, and sets are untagged arrays.
   - Outputs without an inline datum use the array form `[addr, value]` or `[addr, value, datum_hash]`. Outputs with an inline datum use the map form `{0: addr, 1: value, 2: [1, tag24(bytes)]}`.
