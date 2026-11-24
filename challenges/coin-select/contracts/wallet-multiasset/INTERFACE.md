@@ -119,8 +119,10 @@ The ledger sizes `[body, witness_set, aux]` without the `is_valid` byte
 `size`, `max_val_size` to `len(cbor(value))` of one change output.
 
 Rough sizes under the judge's encoding: an input is 36 bytes (37 once its index is 24
-or more), a vkey witness 101, an ADA-only output at a 57-byte address 61 (min-ada
-952,510 lovelace), and an empty transaction with one input and one witness 149.
+or more), a vkey witness 101, an ADA-only output at a 57-byte address 65 once its lovelace is at least 65,536
+(the coin's CBOR width counts: 61 bytes for 0, 63 below 65,536), so its min-ada is
+969,750 lovelace (`min_lovelace(addr, {}, None)`), and an empty transaction with one
+input and one witness 149.
 The byte model is checked against 60 mainnet transactions in `fixtures/`, rebuilt
 byte for byte (see `fixtures/README.md`).
 
@@ -199,8 +201,7 @@ allowed when the reference also fails.
 
 ## Axes
 
-`fees`, `locked_ada`, `ada_dust`, `inputs_per_tx`, `latency_ms`, `peak_rss_mib`; see
-`README.md` for units and tolerances. They are measured only when every check
+`fees`, `locked_ada`, `ada_dust`, `inputs_per_tx`, `latency_ms`, `peak_rss_mib`. They are measured only when every check
 passed, from the transactions you returned and from `cb participant`'s report, never
 from anything your program prints about itself.
 
@@ -214,6 +215,19 @@ from anything your program prints about itself.
 - `inputs_per_tx`: inputs per transaction, over all scenarios.
 - `latency_ms`: median time from `pay` to reply over all payments.
 - `peak_rss_mib`: the largest peak memory (cgroup, from `cb participant`) of any scenario.
+
+All are minimised. Units, repeats and noise tolerances (a run differs from another
+only if it moves by more than the relative tolerance and the absolute floor; from
+`challenge.toml`):
+
+| axis | unit | repeats | tolerance | tolerance_abs |
+|---|---|---|---|---|
+| `fees` | ADA | 1 | 0.12 | 1.0 |
+| `locked_ada` | ADA | 1 | 0.42 | 1.0 |
+| `ada_dust` | UTxOs | 1 | 0.15 | 2.0 |
+| `inputs_per_tx` | inputs | 1 | 0.3 | 0.2 |
+| `latency_ms` | ms | 3 | 0.9 | 0.05 |
+| `peak_rss_mib` | MiB | 3 | 0.3 | 4.0 |
 
 `dust` belongs to `wallet@1` only; `locked_ada` and `ada_dust` to this contract only.
 

@@ -13,7 +13,7 @@ byte of transaction is 44 lovelace.
   After the tokens are covered, ADA is chosen as in `wallet@1`.
 - **Change shape.** All leftover tokens in one change, or split by policy so that each
   piece is a small UTxO that is cheap to spend later. Every extra change output costs
-  its bytes now (about 61 plus its assets) and its own min-ada (about 0.95 ADA for an
+  its bytes now (about 65 plus its assets) and its own min-ada (about 0.97 ADA for an
   ADA-only output, more with tokens); it can pay back when later payments need only
   one policy and would otherwise drag a whole bundle along.
 - **`max_val_size`.** A change value over 5,000 bytes is invalid. Bundles pile up in
