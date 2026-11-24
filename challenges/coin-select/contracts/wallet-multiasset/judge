@@ -180,8 +180,8 @@ def run_scenario(k, scenario, env, sub_dir, tmp):
                     sim.add_deposit(wallet, e)
                     continue
                 cur = e["id"]
-                t0 = time.monotonic()
                 outputs = [sim.parse_output(o) for o in e["outputs"]]
+                t0 = time.monotonic()
                 peer.send({"type": "pay", "id": e["id"], "outputs": e["outputs"]})
                 line, t1 = peer.readline()
                 stats["lat"].append((t1 - t0) * 1000.0)

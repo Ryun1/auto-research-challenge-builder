@@ -229,6 +229,15 @@ class ValidatorTests(unittest.TestCase):
         err = validate_tx(w, outs, r)
         self.assertTrue(err and "over max" in err, err)
 
+    def test_size_over_max_past_cheap_precheck(self):
+        # 440 inputs pass the 36/input pre-check (15840 + 60 < 16384) but the real
+        # tx (inputs, 101-byte witnesses, outputs) is over max_tx_size.
+        w = {"d0#%d" % i: utxo("d0#%d" % i, i % 8, 2 * ADA) for i in range(440)}
+        outs = [Output(DEST, (100 * ADA, {}))]
+        r = {"inputs": list(w), "change": [], "fee": 700 * ADA}
+        err = validate_tx(w, outs, r)
+        self.assertTrue(err and err.startswith("size ") and err.endswith(" over max"), err)
+
 
 def big_bundle_wallet():
     """One UTxO with 3 policies x 50 names of 32 bytes (about 5.4 KB of value)."""

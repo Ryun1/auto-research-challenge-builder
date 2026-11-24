@@ -10,7 +10,7 @@ Answer every question. "N/A" needs a reason.
 
 ## How could a submission pass the checks while breaking a property?
 
-- Which properties are mechanical, and what escapes each check: `valid-txs` and `serves-feasible` are mechanical and evaluated on every reply with exact integer arithmetic against the judge's own wallet state, so a wrong transaction cannot pass. Any exception while decoding or checking a reply (for example the `deep-json` variant's 60000-deep nested array, which raises `RecursionError`) is the participant's `valid-txs` failure, never a judge bug, so a submission cannot turn its own failure into `infra_failed`. What escapes is the fixed size and fee model (not the real ledger: no scripts, no multi-asset, which is why `wallet-multiasset@0` is deferred) and refusal only being checked against largest-first, which is a conservative test: scenarios are built so the whole wallet can always pay, and largest-first spends the largest coins first, so a refusal it can refute is a plain failure to serve.
+- Which properties are mechanical, and what escapes each check: `valid-txs` and `serves-feasible` are mechanical and evaluated on every reply with exact integer arithmetic against the judge's own wallet state, so a wrong transaction cannot pass. Any exception while decoding or checking a reply (for example the `deep-json` variant's 60000-deep nested array, which raises `RecursionError`) is the participant's `valid-txs` failure, never a judge bug, so a submission cannot turn its own failure into `infra_failed`. What escapes is the fixed size and fee model (not the real ledger: no scripts and no multi-asset; `wallet-multiasset@1` below covers tokens) and refusal only being checked against largest-first, which is a conservative test: scenarios are built so the whole wallet can always pay, and largest-first spends the largest coins first, so a refusal it can refute is a plain failure to serve.
 - Declared properties (what stops a false claim from misleading readers?): `change-privacy` is never checked; the site shows claims as declared and unverified, next to the argument, and the footer of every result comment says so.
 
 ## Could a submission read the seed or the reference?
@@ -30,3 +30,11 @@ Answer every question. "N/A" needs a reason.
 Manual review; the result is flagged, not trusted.
 
 - Who reviews: The maintainer, who also owns taxonomy edits and the judge.
+
+## Contract wallet-multiasset@1
+
+- Byte model vs the ledger: size, fee and min-ada come from exact CBOR (`model.py`, `cbor.py`), not an estimate. The model is checked against 60 mainnet transactions rebuilt byte for byte (`contracts/wallet-multiasset/fixtures`, `test_fixtures.py`); fee size is `len(cbor(tx)) - 1`, as the ledger sizes `[body, witness_set, aux]` without the `is_valid` byte. What escapes is anything the fixtures do not cover (scripts, certificates, metadata, collateral).
+- Refusals: judged against a token-aware reference (cover each token from the UTxOs holding most of it, then add lovelace largest first, up to `max_tx_size`), so a refusal the reference can refute is a plain failure to serve, as on `wallet@1`.
+- Axes (`fees`, `locked_ada`, `ada_dust`, inputs, latency, memory) are computed only from the judge's own wallet copy, built from validated replies, never from anything the participant prints.
+- Inherited pattern: `sim.reference` runs inside the same try block that blames the participant for undecodable replies, so a bug in the reference would show up as an "unparseable reply" failure of the participant. The reference is tested on every generated payment (`test_sim.py`) to keep this from happening.
+- Known gap, open question for the maintainer (not fixed): `ada_dust` exempts UTxOs holding tokens, so a submission could park small ADA amounts inside token-bearing UTxOs without counting as dust.

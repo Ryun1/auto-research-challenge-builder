@@ -48,7 +48,7 @@ are new payments to the wallet, one to five UTxOs each:
     {"type":"deposit","utxos":[
       {"id":"d3#0","index":0,"addr":2,
        "value":{"lovelace":2500000,"assets":{"<policy>":{"<name>":1}}}},
-      {"id":"d3#1","index":1,"addr":5,"value":{"lovelace":12000000},
+      {"id":"d3#1","index":1,"addr":5,"value":{"lovelace":12000000,"assets":{}},
        "datum":{"inline":"4401020304"}}]}
 
 `addr` is the wallet key (0..7) that owns the UTxO. `index` is the output index of
@@ -79,8 +79,9 @@ or `{"refuse":true}`.
   `value` (as above). Change outputs never carry a datum.
 - Payment outputs are built as given. The tx lists them first, then your change
   outputs in order. **Change output `k` of payment `p` has id `p#k` and on-chain
-  index `len(payment outputs) + k`.** A UTxO with index 24 or more costs one more
-  byte to spend (the index no longer fits one CBOR byte).
+  index `len(payment outputs) + k`.** An index of 24 to 255 costs one more
+  byte than 0 to 23 (in the input and in the model), and 256 or more costs two more. This is reachable: about 266
+  change outputs fit in 16 KB. `model.py` handles it.
 - Change `k` becomes a wallet UTxO owned by key `change[k].addr`, with no datum.
 - Inputs are removed from the wallet. After a refusal the wallet is unchanged.
 
@@ -119,12 +120,14 @@ The ledger sizes `[body, witness_set, aux]` without the `is_valid` byte
 `size`, `max_val_size` to `len(cbor(value))` of one change output.
 
 Rough sizes under the judge's encoding: an input is 36 bytes (37 once its index is 24
-or more), a vkey witness 101, an ADA-only output at a 57-byte address 65 once its lovelace is at least 65,536
+or more, 38 from 256), a vkey witness 101, an ADA-only output at a 57-byte address 65 once its lovelace is at least 65,536
 (the coin's CBOR width counts: 61 bytes for 0, 63 below 65,536), so its min-ada is
 969,750 lovelace (`min_lovelace(addr, {}, None)`), and an empty transaction with one
-input and one witness 149.
+input and one witness 149 at fee 0 (about 153 at a real fee, since the fee's CBOR width counts).
 The byte model is checked against 60 mainnet transactions in `fixtures/`, rebuilt
 byte for byte (see `fixtures/README.md`).
+
+`model.py` works in raw bytes (policy, asset names, addresses and txids as `bytes`; inputs as `(txid, index)` tuples), not hex.
 
 `model.py` exports `PARAMS`, `Output(address, (lovelace, assets), datum)`,
 `tx_size(inputs, outputs, fee, n_witnesses)`, `min_fee(size)`, `min_ada(output)`,

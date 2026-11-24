@@ -6,11 +6,11 @@ one_line = "Choose which coins a Cardano wallet spends for each payment, and wha
 
 stakes = """Every Cardano wallet runs coin selection for every payment it makes. The choice sets the fee paid now and the shape of the wallet left behind. Among the goals of CIP-2, the Cardano standard for it: limit the dust that builds up in the UTxO set, and keep outputs that let future payments be made with few inputs. It also notes that putting all change into one output is widely considered bad for privacy. These pull against each other, so there is no single best answer, only trade-offs worth mapping."""
 
-why_this_instance = """Each run replays 8 wallets through 300 events: deposits (some small and reward-like, 1 to 3 ADA) and about 210 payments of one to three outputs. Wallets start with 60 to 120 UTxOs. Fees use the mainnet fee parameters with a fixed transaction-size model. Every run draws fresh wallets from a new seed, so nothing can be tuned to the inputs. The results say nothing about wallets holding native tokens, script outputs or exchange-sized UTxO sets."""
+why_this_instance = """Each run replays 8 wallets through 300 events: deposits (some small and reward-like, 1 to 3 ADA) and about 210 payments of one to three outputs. Wallets start with 60 to 120 UTxOs. Fees use the mainnet fee parameters with a fixed transaction-size model. Every run draws fresh wallets from a new seed, so nothing can be tuned to the inputs. These results say nothing about wallets holding native tokens (wallet-multiasset@1 covers those), script outputs or exchange-sized UTxO sets."""
 
 cautions = [
   "Transaction size comes from a fixed model (60 bytes, plus 140 per input and 65 per output), not real CBOR with witnesses and metadata, so fees are close to but not exactly what the ledger would charge.",
-  "ADA only: multi-asset selection waits for a separate contract (wallet-multiasset@0) with a min-ada model checked against cardano-ledger.",
+  "This contract is ADA only; native tokens, datums and a real byte model are in the separate contract wallet-multiasset@1, whose min-ada and size model is checked against mainnet transactions.",
   "Dust here means a UTxO under 2 ADA at the end of a run. The threshold is this challenge's choice, not a protocol constant.",
   "Latency is the judge's clock around each reply on a GitHub-hosted runner, including the pipe; differences below the axis tolerance are noise.",
   "Protocol parameters change through on-chain governance; these use the documented mainnet values.",

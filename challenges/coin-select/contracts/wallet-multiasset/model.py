@@ -5,7 +5,7 @@ This file is the definition of size, fee and min-ada for wallet-multiasset@1; so
 import hashlib
 from typing import NamedTuple, Optional, Tuple
 
-from cbor import Raw, Tag, encode
+from cbor import Tag, encode
 
 ADA = 1_000_000
 

@@ -20,3 +20,8 @@ hypothesis and the axes you expect to move in `submission.toml` (`hypothesis`,
 `expected`; see `SUBMITTING.md`). If the measurement refutes it, submit anyway and
 say so: that is a result. Run the judge locally (see `README.md`) before opening a
 PR.
+
+For `wallet-multiasset@1`: build on `baseline-multiasset`; a `new` submission gets
+"unknown" predictions (they compare against the `wallet@1` baseline); do not reuse a
+`wallet@1` direction name; and `baseline-multiasset` is recorded on main by a
+maintainer after merge (see `SUBMITTING.md`).

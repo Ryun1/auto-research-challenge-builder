@@ -40,6 +40,11 @@ jobs:
           CB_REQUIRE_VALGRIND: '1'
           CB_REQUIRE_SANDBOX: '1'
       - run: cargo test --locked --release --manifest-path kits/rust/Cargo.toml
+      - name: wallet-multiasset model tests (CBOR, byte model, mainnet fixtures, simulator)
+        # Fast Python tests only (test_judge takes about 40 s). The mainnet fixture
+        # check is this contract's admission bar.
+        working-directory: challenges/coin-select/contracts/wallet-multiasset
+        run: python3 -m unittest test_cbor test_model test_fixtures test_sim
       - name: cb preflight every challenge
         run: |
           cargo build --locked --release
