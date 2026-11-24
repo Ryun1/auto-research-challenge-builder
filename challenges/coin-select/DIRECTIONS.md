@@ -71,5 +71,7 @@ refutes one is a useful result.
      Trying several thresholds is calibration within one direction: submit the
      best one, `builds-on`.
 
-Deferred: multi-asset selection waits for the `wallet-multiasset@0` contract (see
-`challenge.toml`).
+Multi-asset selection now has its own contract, `wallet-multiasset@1`, with the
+baseline `baseline-multiasset` (see `contracts/wallet-multiasset/CHOICES.md` for the
+open choices: token-aware selection, consolidating token UTxOs, key reuse, change
+splitting). The directions above are for `wallet@1`.

@@ -7,11 +7,12 @@ that changes nothing else. Merged submissions are immutable.
    executable `build.sh` in the directory, plus whatever your code needs. A whole
    codebase is fine, under `max_bytes` (4 MiB) in `challenge.toml`. `build.sh` runs
    offline in a sandbox, must leave an executable `./select` in the directory (see
-   `contracts/wallet/INTERFACE.md`), and must vendor any dependencies.
-2. `submission.toml` declares: `id` (the dir name), `contract = "wallet@1"`,
+   `contracts/<contract>/INTERFACE.md`), and must vendor any dependencies.
+2. `submission.toml` declares: `id` (the dir name), `contract` (`"wallet@1"` or
+   `"wallet-multiasset@1"`),
    `novelty`, `direction`, `parent`, `taxonomy` (keys `strategy`, `change`,
    `consolidation`, `language`; see `taxonomy.toml`), `summary`, optional `claims`
-   (for the declared property `change-privacy` only), `model`, and optionally
+   (for the declared property `change-privacy` only, which exists on `wallet@1` only), `model`, and optionally
    `hypothesis` and `expected` (below).
 3. Novelty is your own declaration and is never judged. `new` starts a direction
    `<name>` that no accepted submission uses. `builds-on` names an accepted

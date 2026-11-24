@@ -54,3 +54,7 @@ reason = "Largest-first stops at the first coins that cover the payment, so it s
 [[rules]]
 text   = "consolidation other than none costs extra inputs per transaction: expect it to trade fees now for dust later"
 reason = "Each extra input adds 140 bytes to the transaction, 6,160 lovelace of fee at min_fee_a = 44"
+
+[[rules]]
+text   = "in wallet-multiasset@1 an extra input costs ~40 bytes plus 101 per new key, not 140"
+reason = "The byte model encodes an input as 36 bytes (37 from index 24) and adds one 101-byte vkey witness per distinct key among the inputs, so consolidating inputs of keys already in the transaction is far cheaper than in wallet@1"
