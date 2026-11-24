@@ -67,6 +67,22 @@ class JudgeTests(unittest.TestCase):
         self.assertFalse(c["ok"])
         self.assertIn("fee below min_fee", c["detail"])
 
+    def test_broken_variants(self):
+        names = sorted(n for n in os.listdir(BROKEN) if n.startswith("ma-"))
+        if not names:
+            self.skipTest("broken variants not built yet")
+        for name in names:
+            with self.subTest(name):
+                d = os.path.join(BROKEN, name)
+                with open(os.path.join(d, "EXPECT")) as f:
+                    expect = f.read().strip()
+                res = run_judge(d)
+                self.assertFalse(res["ok"])
+                self.assertFalse(res.get("infra", False), res)
+                c = check(res, "ma-valid-txs")
+                self.assertFalse(c["ok"])
+                self.assertIn(expect, c["detail"])
+
     def test_refusing_participant(self):
         d = tiny_participant(
             "for line in sys.stdin:\n"

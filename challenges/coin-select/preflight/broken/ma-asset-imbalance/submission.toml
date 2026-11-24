@@ -1,0 +1,6 @@
+id        = "ma-asset-imbalance"
+contract  = "wallet-multiasset@1"
+novelty   = "new"
+direction = "ma-asset-imbalance"
+taxonomy  = { strategy = "largest-first", change = "single", consolidation = "none", language = "python" }
+summary   = "Broken on purpose: largest-first that keeps one unit of a leftover asset out of the change."

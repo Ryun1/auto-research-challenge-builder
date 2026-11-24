@@ -1,0 +1,6 @@
+id        = "ma-linear-fee"
+contract  = "wallet-multiasset@1"
+novelty   = "new"
+direction = "ma-linear-fee"
+taxonomy  = { strategy = "largest-first", change = "single", consolidation = "none", language = "python" }
+summary   = "Broken on purpose: largest-first that prices the fee with a linear per-input/per-output size estimate."

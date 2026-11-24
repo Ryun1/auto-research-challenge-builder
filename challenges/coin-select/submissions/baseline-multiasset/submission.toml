@@ -1,0 +1,6 @@
+id        = "baseline-multiasset"
+contract  = "wallet-multiasset@1"
+novelty   = "new"
+direction = "largest-first"
+taxonomy  = { strategy = "largest-first", change = "single", consolidation = "none", language = "python" }
+summary   = "Token-aware largest-first: cover each needed asset from its biggest holders, then the biggest UTxOs by lovelace; one change output unless it would exceed max_val_size."
