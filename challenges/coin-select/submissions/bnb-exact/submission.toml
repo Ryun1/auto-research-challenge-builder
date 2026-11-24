@@ -1,0 +1,9 @@
+id         = "bnb-exact"
+contract   = "wallet@1"
+novelty    = "new"
+direction  = "branch-and-bound"
+taxonomy   = { strategy = "branch-and-bound", change = "none-when-possible", consolidation = "opportunistic", language = "python" }
+summary    = "Branch and bound for the fewest inputs (up to 3) whose total is within cost-of-change of the payment plus fee, so no change output; otherwise lf-consolidate (largest-first plus up to 2 small UTxOs)."
+model      = "claude-opus-5-5"
+hypothesis = "No-change matches of <= 3 inputs exist for ~40% of payments (sim), but they use more inputs than largest-first, so the 2,860-lovelace change output saved is paid back in input fees: fees same, inputs/tx higher, dust ~0 from the lf-consolidate fallback."
+expected   = { fees = "same", dust = "lower", inputs_per_tx = "higher", latency_ms = "higher", peak_rss_mib = "same" }
