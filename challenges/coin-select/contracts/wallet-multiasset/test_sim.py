@@ -234,7 +234,7 @@ class ValidatorTests(unittest.TestCase):
         # tx (inputs, 101-byte witnesses, outputs) is over max_tx_size.
         w = {"d0#%d" % i: utxo("d0#%d" % i, i % 8, 2 * ADA) for i in range(440)}
         outs = [Output(DEST, (100 * ADA, {}))]
-        r = {"inputs": list(w), "change": [], "fee": 700 * ADA}
+        r = {"inputs": list(w), "change": [], "fee": 780 * ADA}
         err = validate_tx(w, outs, r)
         self.assertTrue(err and err.startswith("size ") and err.endswith(" over max"), err)
 
