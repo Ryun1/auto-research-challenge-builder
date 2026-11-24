@@ -6,8 +6,9 @@ import unittest
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 JUDGE = os.path.join(HERE, "judge")
-BASELINE = os.path.join(HERE, "baseline")
-BROKEN = os.path.join(HERE, "preflight", "broken")
+CHALLENGE = os.path.dirname(os.path.dirname(HERE))
+BASELINE = os.path.join(CHALLENGE, "submissions", "baseline-multiasset")
+BROKEN = os.path.join(CHALLENGE, "preflight", "broken")
 
 FAKE_CB = """#!/bin/sh
 # fake cb: participant --report R -- CMD...
