@@ -1,0 +1,10 @@
+id         = "lf-threshold"
+contract   = "wallet@1"
+novelty    = "builds-on"
+direction  = ""
+parent     = "lf-consolidate"
+taxonomy   = { strategy = "largest-first", change = "single", consolidation = "threshold", language = "python" }
+summary    = "lf-consolidate that consolidates only while the wallet holds more than 10 UTxOs under 2 ADA (Directions item 4)."
+model      = "claude-opus-5-5"
+hypothesis = "Small deposits arrive steadily, so the 10-UTxO threshold is crossed on most payments: consolidating past it saves few inputs (sim: 1.49 vs 1.53 per tx) while dust settles near the threshold (sim: ~9.5). Directions expected most of the dust saving with fewer inputs; expect that refuted."
+expected   = { fees = "same", dust = "higher", inputs_per_tx = "same", latency_ms = "same", peak_rss_mib = "same" }

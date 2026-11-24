@@ -1,0 +1,92 @@
+#!/usr/bin/env python3
+"""lf-threshold: lf-consolidate (largest-first, one change output, up to MAX_EXTRA
+of the smallest UTxOs under DUST worth more than their input fee), but it
+consolidates only while the wallet holds more than THRESHOLD UTxOs under DUST."""
+import json
+import sys
+
+DUST = 2_000_000  # the judge's dust line
+MAX_EXTRA = 2
+THRESHOLD = 10
+
+
+def main():
+    p = None
+    wallet = {}
+    for line in sys.stdin:
+        msg = json.loads(line)
+        t = msg["type"]
+        if t == "params":
+            p = msg
+        elif t == "deposit":
+            for u in msg["utxos"]:
+                wallet[u["id"]] = u["lovelace"]
+        elif t == "pay":
+            reply = select(p, wallet, [o["lovelace"] for o in msg["outputs"]])
+            if reply is None:
+                out = {"refuse": True}
+            else:
+                for i in reply["inputs"]:
+                    del wallet[i]
+                for k, c in enumerate(reply["change"]):
+                    wallet["%s#%d" % (msg["id"], k)] = c
+                out = reply
+            sys.stdout.write(json.dumps(out) + "\n")
+            sys.stdout.flush()
+        elif t == "end":
+            return
+
+
+def select(p, wallet, outs):
+    sz = p["size"]
+
+    def fee(n_in, n_out):
+        size = sz["base"] + sz["input"] * n_in + sz["output"] * n_out
+        return p["min_fee_a"] * size + p["min_fee_b"], size
+
+    min_ada = (160 + sz["output"]) * p["coins_per_utxo_byte"]
+    need = sum(outs)
+    total, picked = 0, []
+    base = None
+    for uid in sorted(wallet, key=lambda i: (-wallet[i], i)):
+        picked.append(uid)
+        total += wallet[uid]
+        base = finish(fee, min_ada, p, picked, total, need, len(outs))
+        if base is False:
+            return None
+        if base:
+            break
+    if not base:
+        return None
+    # consolidation: add the smallest dust UTxOs worth more than their input fee
+    if sum(1 for v in wallet.values() if v < DUST) <= THRESHOLD:
+        return base
+    in_fee = p["min_fee_a"] * sz["input"]
+    chosen = set(picked)
+    smalls = sorted((wallet[u], u) for u in wallet
+                    if u not in chosen and in_fee < wallet[u] < DUST)
+    for v, u in smalls[:MAX_EXTRA]:
+        r = finish(fee, min_ada, p, picked + [u], total + v, need, len(outs))
+        if not r:
+            break
+        picked.append(u)
+        total += v
+        base = r
+    return base
+
+
+def finish(fee, min_ada, p, picked, total, need, n_outs):
+    """Reply for these inputs; None if they do not cover; False if too big."""
+    n = len(picked)
+    fee_c, size = fee(n, n_outs + 1)
+    if size > p["max_tx_size"]:
+        return False
+    spare = total - need
+    if spare - fee_c >= min_ada:
+        return {"inputs": list(picked), "change": [spare - fee_c], "fee": fee_c}
+    if spare >= fee(n, n_outs)[0]:
+        return {"inputs": list(picked), "change": [], "fee": spare}
+    return None
+
+
+main()
