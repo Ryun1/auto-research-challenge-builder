@@ -1,0 +1,10 @@
+id         = "lf-consolidate-c"
+contract   = "wallet@1"
+novelty    = "builds-on"
+direction  = ""
+parent     = "lf-consolidate"
+taxonomy   = { strategy = "largest-first", change = "single", consolidation = "opportunistic", language = "c" }
+summary    = "lf-consolidate ported to C with static buffers and no heap use; replies are byte-identical to the Python version on sim.py's scenarios."
+model      = "claude-opus-5-5"
+hypothesis = "Same algorithm, byte-identical replies, so fees, dust and inputs/tx match lf-consolidate; a small C binary with no interpreter and no heap should peak far below Python's ~6 MiB and Rust's ~3 MiB, and reply faster."
+expected   = { fees = "same", dust = "same", inputs_per_tx = "same", latency_ms = "lower", peak_rss_mib = "lower" }
