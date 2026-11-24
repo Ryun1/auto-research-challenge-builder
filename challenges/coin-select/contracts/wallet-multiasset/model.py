@@ -99,11 +99,17 @@ def min_lovelace(address: bytes, assets, datum, p=PARAMS) -> int:
         l = need
 
 
-def tx_cbor(inputs, outputs, fee, n_witnesses, tag_sets=False, extra_body=(), aux=None):
+def tx_cbor(inputs, outputs, fee, n_witnesses, tag_sets=False, extra_body=(), aux=None,
+            tag_witnesses=None):
+    """The tx as CBOR items. tag_sets tags the input set and, unless
+    tag_witnesses says otherwise, the witness set."""
     ins = [[txid, idx] for txid, idx in inputs]
     wits = [[b"\x00" * 32, b"\x00" * 64] for _ in range(n_witnesses)]
+    if tag_witnesses is None:
+        tag_witnesses = tag_sets
     if tag_sets:
         ins = Tag(258, ins)
+    if tag_witnesses:
         wits = Tag(258, wits)
     body = {0: ins, 1: list(outputs), 2: fee}
     for k, raw in extra_body:
@@ -112,7 +118,14 @@ def tx_cbor(inputs, outputs, fee, n_witnesses, tag_sets=False, extra_body=(), au
 
 
 def tx_size(inputs, outputs, fee, n_witnesses) -> int:
-    return len(encode(tx_cbor(inputs, [output_cbor(o) for o in outputs], fee, n_witnesses)))
+    """The ledger's tx size, used for min_fee and max_tx_size.
+
+    It is the judge-form tx's CBOR length less one: the ledger measures the
+    3-item [body, witness_set, aux] (Alonzo toCBORForSizeComputation, kept in
+    Conway), so the is_valid byte is not counted. Mainnet agrees: of 3,892
+    fixture-eligible txs, 537 pay exactly min_fee(len(cbor) - 1) and none less.
+    """
+    return len(encode(tx_cbor(inputs, [output_cbor(o) for o in outputs], fee, n_witnesses))) - 1
 
 
 def min_fee(size: int, p=PARAMS) -> int:

@@ -46,6 +46,11 @@ class ModelTests(unittest.TestCase):
         two = tx_size([utxo_ref("d0#30", 30)], [], 0, 1)
         self.assertEqual(two - one, 1)
 
+    def test_tx_size_omits_is_valid_byte(self):
+        ins, outs = [utxo_ref("d0#1", 1)], [Output(wallet_address(1), (2 * ADA, {}))]
+        full = encode(tx_cbor(ins, [output_cbor(o) for o in outs], 200000, 1))
+        self.assertEqual(tx_size(ins, outs, 200000, 1), len(full) - 1)
+
     def test_witness_cost(self):
         a = tx_size([utxo_ref("d0#1", 1)], [], 200000, 1)
         b = tx_size([utxo_ref("d0#1", 1)], [], 200000, 2)
@@ -60,6 +65,15 @@ class ModelTests(unittest.TestCase):
         self.assertEqual(a, plain)  # null (1 byte) replaced by empty map (1 byte)
         e = tx_cbor(ins, [], 1, 1, extra_body=[(7, Raw(b"\x00"))])
         self.assertEqual(list(e[0]), [0, 1, 2, 7])
+
+    def test_tag_witnesses_separately(self):
+        ins = [utxo_ref("d0#1", 1)]
+        only_ins = tx_cbor(ins, [], 1, 1, tag_sets=True, tag_witnesses=False)
+        self.assertEqual(only_ins[0][0].tag, 258)
+        self.assertIsInstance(only_ins[1][0], list)
+        only_wits = tx_cbor(ins, [], 1, 1, tag_witnesses=True)
+        self.assertIsInstance(only_wits[0][0], list)
+        self.assertEqual(only_wits[1][0].tag, 258)
 
     def test_min_lovelace_fixed_point(self):
         assets = {b"\x01" * 28: {bytes([i]): 1 for i in range(40)}}
