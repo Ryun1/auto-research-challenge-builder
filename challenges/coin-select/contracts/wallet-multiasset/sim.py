@@ -339,8 +339,14 @@ def locked_ada(wallet) -> int:
 
 
 def ada_dust(wallet) -> int:
-    """ADA-only UTxOs under 2 ADA."""
-    return sum(1 for u in wallet.values() if not u.value[1] and u.value[0] < 2 * ADA)
+    """UTxOs whose free ADA (lovelace above their own min_ada) is under 1 ADA.
+
+    Counts token and datum UTxOs too, so moving a small ADA amount into a token
+    UTxO does not hide it. An ADA-only UTxO at a wallet key counts below about
+    1.97 ADA (min_ada 969,750 + 1 ADA).
+    """
+    return sum(1 for u in wallet.values()
+               if u.value[0] - min_ada(Output(wallet_address(u.addr), u.value, u.datum)) < ADA)
 
 
 def simulate_reference(scenario):

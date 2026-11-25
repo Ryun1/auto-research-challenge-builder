@@ -281,14 +281,17 @@ scoped to `wallet-multiasset@1`:
 |---|---|---|
 | `fees` (shared) | total fees in ADA, mean over scenarios | minimise |
 | `locked_ada` | Σ min_ada over wallet UTxOs at the end, in ADA, mean over scenarios | minimise |
-| `ada_dust` | ADA-only UTxOs under 2 ADA at the end, mean over scenarios | minimise |
+| `ada_dust` | UTxOs with under 1 ADA above their own min_ada at the end (tokens and datums included), mean over scenarios | minimise |
 | `inputs_per_tx` (shared) | as wallet@1 | minimise |
 | `latency_ms` (shared) | as wallet@1 | minimise |
 | `peak_rss_mib` (shared) | as wallet@1 | minimise |
 
 `locked_ada` is the new tension: consolidating token UTxOs frees ADA but
 costs bytes now; fragmenting change for granularity locks more. `ada_dust`
-counts ADA-only UTxOs so token UTxOs aren't punished for their min-ada.
+counts free ADA above each UTxO's own min-ada, so token UTxOs aren't
+punished for their min-ada but can't hide small ADA either. (Revised
+2026-11-25: the first rule, ADA-only UTxOs under 2 ADA, let a solver
+exempt small change by adding 1 token unit.)
 If shared `fees` turns out to need a different tolerance for the new
 contract, split it into a scoped `ma_fees` then.
 
@@ -328,7 +331,7 @@ contract, split it into a scoped `ma_fees` then.
 - Wallet has 8 keys; witnesses counted per distinct key; change names its
   key. This makes input cost realistic (~40 bytes per input plus ~100 per
   new key) instead of wallet@1's flat 140, and adds a key-reuse choice.
-- New axes `locked_ada` and `ada_dust` (ADA-only UTxOs under 2 ADA),
+- New axes `locked_ada` and `ada_dust` (UTxOs under 1 ADA above min_ada),
   scoped to the new contract; `dust` scoped to wallet@1; the other four
   axes shared.
 - Change outputs never carry datums.

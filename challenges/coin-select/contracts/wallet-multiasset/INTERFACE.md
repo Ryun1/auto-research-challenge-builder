@@ -213,8 +213,11 @@ from anything your program prints about itself.
   wallet (priced at its owner's address with its value and datum), in ADA; mean over
   the scenarios. It is the ADA the wallet cannot spend freely. Fewer, tidier token
   UTxOs lock less.
-- `ada_dust`: ADA-only UTxOs under 2 ADA left at the end (a datum does not exclude
-  one), mean over the scenarios. UTxOs holding tokens never count.
+- `ada_dust`: UTxOs left at the end whose free ADA (lovelace above that UTxO's own
+  `min_ada`, priced as for `locked_ada`) is under 1 ADA, mean over the scenarios.
+  Token and datum UTxOs count too: an ADA-only UTxO at a wallet key counts below
+  1,969,750 lovelace, and a token UTxO carrying little more than its min-ada counts,
+  so adding a token unit to small change does not hide it.
 - `inputs_per_tx`: inputs per transaction, over all scenarios.
 - `latency_ms`: median time from `pay` to reply over all payments.
 - `peak_rss_mib`: the largest peak memory (cgroup, from `cb participant`) of any scenario.
@@ -227,7 +230,7 @@ only if it moves by more than the relative tolerance and the absolute floor; fro
 |---|---|---|---|---|
 | `fees` | ADA | 1 | 0.12 | 1.0 |
 | `locked_ada` | ADA | 1 | 0.42 | 1.0 |
-| `ada_dust` | UTxOs | 1 | 0.15 | 2.0 |
+| `ada_dust` | UTxOs | 1 | 0.18 | 2.0 |
 | `inputs_per_tx` | inputs | 1 | 0.3 | 0.2 |
 | `latency_ms` | ms | 3 | 0.9 | 0.05 |
 | `peak_rss_mib` | MiB | 3 | 0.3 | 4.0 |

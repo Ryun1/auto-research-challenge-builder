@@ -32,8 +32,10 @@ byte of transaction is 44 lovelace.
   later transactions at one witness; spreading change over keys spreads the UTxOs but
   every later transaction that mixes keys pays for each. The ownership of a deposit is
   given; only your change `addr` is yours to choose.
-- **Consolidation.** Spending extra small ADA-only inputs while paying keeps
-  `ada_dust` low. Here an extra input from a key already in the transaction is about
+- **Consolidation.** Spending extra small inputs while paying keeps `ada_dust` low.
+  That includes token UTxOs carrying little more than their min-ada, which are most
+  of the count for the baseline (mostly deposits); merging them also lowers
+  `locked_ada`. Here an extra input from a key already in the transaction is about
   36 bytes (about 1.6k lovelace), not the 140 of `wallet@1`; from a new key it is
   about 137 bytes.
 - **Datum UTxOs.** A deposit with an inline datum has a larger min-ada but spends like

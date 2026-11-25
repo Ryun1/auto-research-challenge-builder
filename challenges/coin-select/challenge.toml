@@ -78,7 +78,7 @@ tolerance_abs = 2.0
 contracts = ["wallet@1"]
 
 # locked_ada and ada_dust: tolerance = 2 x (range / median) of baseline-multiasset
-# over seeds 1-5 (locked_ada 272.1-339.2 ADA, median 325.7; ada_dust 29.4-31.6, median 30.5).
+# over seeds 1-5 (locked_ada 272.1-339.2 ADA, median 325.7; ada_dust 88.9-97.4, median 92.4).
 # Preflight's noise check measures only the wallet@1 baseline, so these two were hand-tuned
 # from baseline-multiasset, not by preflight.
 
@@ -96,7 +96,7 @@ id        = "ada_dust"
 unit      = "UTxOs"
 direction = "minimise"
 repeats   = 1
-tolerance = 0.15
+tolerance = 0.18
 tolerance_abs = 2.0
 contracts = ["wallet-multiasset@1"]
 

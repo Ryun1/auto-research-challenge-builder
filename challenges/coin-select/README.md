@@ -29,7 +29,7 @@ Each contract has its own judge, scenarios and baseline (`submissions/baseline` 
 | `fees` | total fees in ADA, mean over the 8 scenarios | minimise |
 | `dust` | UTxOs under 2 ADA left at the end, mean over scenarios; `wallet@1` only | minimise |
 | `locked_ada` | ADA locked as min-ada across the wallet's UTxOs at the end, mean over scenarios; `wallet-multiasset@1` only | minimise |
-| `ada_dust` | ADA-only UTxOs under 2 ADA left at the end, mean over scenarios; `wallet-multiasset@1` only | minimise |
+| `ada_dust` | UTxOs with under 1 ADA above their own min-ada left at the end (tokens and datums included), mean over scenarios; `wallet-multiasset@1` only | minimise |
 | `inputs_per_tx` | inputs per transaction, over all scenarios | minimise |
 | `latency_ms` | median time from `pay` to reply, measured by the judge | minimise |
 | `peak_rss_mib` | peak memory, measured by `cb participant` | minimise |

@@ -324,9 +324,24 @@ class WalletTests(unittest.TestCase):
     def test_locked_ada_and_dust(self):
         expect = sum(min_ada(Output(wallet_address(u.addr), u.value, u.datum)) for u in W.values())
         self.assertEqual(locked_ada(W), expect)
-        self.assertEqual(ada_dust(W), 0)
-        w = dict(W, x=utxo("x#0", 0, 2 * ADA - 1), y=utxo("y#0", 0, ADA, {POL_A: {TOK: 1}}))
-        self.assertEqual(ada_dust(w), 1)
+        base = ada_dust(W)
+        # ADA-only: dust iff under 1 ADA above its own min_ada (969,750 at a wallet key)
+        m = min_ada(Output(wallet_address(0), (2 * ADA, {}), None))
+        self.assertEqual(m, 969_750)
+        for lov, d in [(m + ADA - 1, 1), (m + ADA, 0)]:
+            self.assertEqual(ada_dust(dict(W, x=utxo("x#0", 0, lov))) - base, d, lov)
+        # a datum raises min_ada, so the same lovelace can become dust
+        xd = utxo("x#0", 0, m + ADA, None, ("inline", b"\x58\x40" + b"\x00" * 64))
+        self.assertEqual(ada_dust(dict(W, x=xd)) - base, 1)
+
+    def test_ada_dust_counts_token_utxos(self):
+        # the old rule exempted any UTxO holding tokens, so a small change output could
+        # carry 1 token unit to stop counting; now its free ADA is what counts
+        base = ada_dust(W)
+        tok = {POL_A: {TOK: 1}}
+        mt = min_ada(Output(wallet_address(0), (5 * ADA, tok), None))
+        self.assertEqual(ada_dust(dict(W, y=utxo("y#0", 0, mt + ADA // 2, tok))) - base, 1)
+        self.assertEqual(ada_dust(dict(W, y=utxo("y#0", 0, mt + ADA, tok))) - base, 0)
 
 
 class GeneratorTests(unittest.TestCase):
