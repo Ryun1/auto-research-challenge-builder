@@ -7,11 +7,12 @@ that changes nothing else. Merged submissions are immutable.
    executable `build.sh` in the directory, plus whatever your code needs. A whole
    codebase is fine, under `max_bytes` (4 MiB) in `challenge.toml`. `build.sh` runs
    offline in a sandbox, must leave an executable `./select` in the directory (see
-   `contracts/wallet/INTERFACE.md`), and must vendor any dependencies.
-2. `submission.toml` declares: `id` (the dir name), `contract = "wallet@1"`,
+   `contracts/<contract>/INTERFACE.md`), and must vendor any dependencies.
+2. `submission.toml` declares: `id` (the dir name), `contract` (`"wallet@1"` or
+   `"wallet-multiasset@1"`),
    `novelty`, `direction`, `parent`, `taxonomy` (keys `strategy`, `change`,
    `consolidation`, `language`; see `taxonomy.toml`), `summary`, optional `claims`
-   (for the declared property `change-privacy` only), `model`, and optionally
+   (for the declared property `change-privacy` only, which exists on `wallet@1` only), `model`, and optionally
    `hypothesis` and `expected` (below).
 3. Novelty is your own declaration and is never judged. `new` starts a direction
    `<name>` that no accepted submission uses. `builds-on` names an accepted
@@ -28,6 +29,12 @@ that changes nothing else. Merged submissions are immutable.
 5. Run the judge locally first (see `README.md`). CI then builds your submission and
    runs the same judge, which checks the properties and measures every axis. Those
    numbers are a claim from the PR run.
-6. There is no record to beat and no minimum improvement. If the checks pass, the
+6. Limits of `wallet-multiasset@1` submissions (`cb` assumes one baseline per challenge):
+   build on `baseline-multiasset`; `new` submissions get "unknown" predictions,
+   because predictions compare against the `wallet@1` baseline; a direction name must
+   not collide with any `wallet@1` direction (the gate checks uniqueness across
+   contracts); and `baseline-multiasset` is recorded on main by a maintainer Accept
+   dispatch after merge.
+7. There is no record to beat and no minimum improvement. If the checks pass, the
    PR is landed on main automatically, two clean runs there record it on the map,
    and the PR is closed. Failing and noisy attempts are recorded too.

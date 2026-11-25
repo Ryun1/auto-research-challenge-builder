@@ -1,0 +1,6 @@
+id        = "ma-bad-addr"
+contract  = "wallet-multiasset@1"
+novelty   = "new"
+direction = "ma-bad-addr"
+taxonomy  = { strategy = "largest-first", change = "single", consolidation = "none", language = "python" }
+summary   = "Broken on purpose: largest-first that sends change to key 8, outside the wallet's keys 0..7."

@@ -1,0 +1,298 @@
+#!/usr/bin/env python3
+"""Baseline for coin-select wallet-multiasset@1: token-aware largest-first.
+
+For each asset the payment needs it takes the UTxOs holding most of it, then
+adds UTxOs by lovelace (largest first) until payment, fee and min-ada are
+covered. Leftover assets go to change at key 0, split only when one change
+would exceed max_val_size; ADA-only leftover below min-ada folds into the fee.
+Self-contained: the byte model is inlined from model.py.
+"""
+import hashlib
+import json
+import sys
+
+U64 = 2 ** 64
+COIN_MAX = U64 - 1  # widest coin, so a change group fits whatever lovelace it gets
+
+
+# ------------------------------------------------------------------ CBOR
+
+class Tag:
+    def __init__(self, tag, value):
+        self.tag, self.value = tag, value
+
+
+def _head(major, n):
+    m = major << 5
+    if n < 24:
+        return bytes([m | n])
+    for info, width in ((24, 1), (25, 2), (26, 4), (27, 8)):
+        if n < 1 << (8 * width):
+            return bytes([m | info]) + n.to_bytes(width, "big")
+    raise ValueError("integer too large")
+
+
+def encode(obj):
+    if obj is True:
+        return b"\xf5"
+    if obj is None:
+        return b"\xf6"
+    if isinstance(obj, int):
+        return _head(0, obj)
+    if isinstance(obj, bytes):
+        return _head(2, len(obj)) + obj
+    if isinstance(obj, Tag):
+        return _head(6, obj.tag) + encode(obj.value)
+    if isinstance(obj, list):
+        return _head(4, len(obj)) + b"".join(encode(x) for x in obj)
+    if isinstance(obj, dict):
+        return _head(5, len(obj)) + b"".join(encode(k) + encode(v) for k, v in obj.items())
+    raise ValueError("cannot encode %r" % type(obj))
+
+
+# ------------------------------------------------------------ byte model
+# value = (lovelace, {policy bytes: {name bytes: qty}})
+# datum = None | ("inline", cbor bytes) | ("hash", 32 bytes)
+
+def canon(b):
+    return (len(b), b)
+
+
+def value_cbor(v):
+    coin, assets = v
+    if not assets:
+        return coin
+    return [coin, {p: {n: assets[p][n] for n in sorted(assets[p], key=canon)}
+                   for p in sorted(assets, key=canon)}]
+
+
+def output_cbor(addr, v, datum=None):
+    if datum and datum[0] == "inline":
+        return {0: addr, 1: value_cbor(v), 2: [1, Tag(24, datum[1])]}
+    out = [addr, value_cbor(v)]
+    if datum:
+        out.append(datum[1])
+    return out
+
+
+def value_size(v):
+    return len(encode(value_cbor(v)))
+
+
+def min_ada(P, addr, v, datum=None):
+    return (160 + len(encode(output_cbor(addr, v, datum)))) * P["coins_per_utxo_byte"]
+
+
+def min_lovelace(P, addr, assets, datum=None):
+    l = 0
+    while True:
+        need = min_ada(P, addr, (l, assets), datum)
+        if need <= l:
+            return l
+        l = need
+
+
+def tx_size(refs, outputs, fee, n_wit):
+    """outputs: [(addr, value, datum)]. The ledger size: CBOR length less the is_valid byte."""
+    body = {0: [[t, i] for t, i in refs], 1: [output_cbor(*o) for o in outputs], 2: fee}
+    wits = {0: [[b"\x00" * 32, b"\x00" * 64] for _ in range(n_wit)]}
+    return len(encode([body, wits, True, None])) - 1
+
+
+def min_fee(P, size):
+    return P["min_fee_a"] * size + P["min_fee_b"]
+
+
+def utxo_ref(uid, index):
+    return (hashlib.sha256(uid.split("#")[0].encode()).digest(), index)
+
+
+# ------------------------------------------------------------ JSON <-> model
+
+def parse_value(j):
+    return (j["lovelace"], {bytes.fromhex(p): {bytes.fromhex(n): q for n, q in names.items()}
+                            for p, names in j.get("assets", {}).items()})
+
+
+def value_json(v):
+    return {"lovelace": v[0], "assets": {p.hex(): {n.hex(): q for n, q in names.items()}
+                                         for p, names in v[1].items()}}
+
+
+def parse_datum(j):
+    if j is None:
+        return None
+    (kind, h), = j.items()
+    return (kind, bytes.fromhex(h))
+
+
+def add_into(acc, assets, sign=1):
+    for p, names in assets.items():
+        for n, q in names.items():
+            acc[(p, n)] = acc.get((p, n), 0) + sign * q
+
+
+def nest(flat):
+    out = {}
+    for (p, n), q in flat.items():
+        out.setdefault(p, {})[n] = q
+    return out
+
+
+# ------------------------------------------------------------ selection
+
+def split(P, assets):
+    """Leftover assets into change values that each fit max_val_size: whole
+    policies in canonical order, names only when one policy alone is too big."""
+    def fits(g):
+        return value_size((COIN_MAX, g)) <= P["max_val_size"]
+
+    groups = [{}]
+    for pol in sorted(assets, key=canon):
+        names = assets[pol]
+        trial = {**groups[-1], pol: names}
+        if fits(trial):
+            groups[-1] = trial
+        elif fits({pol: names}):
+            groups.append({pol: names})
+        else:
+            for n in sorted(names, key=canon):
+                cur = groups[-1]
+                trial = {**cur, pol: {**cur.get(pol, {}), n: names[n]}}
+                if fits(trial):
+                    groups[-1] = trial
+                else:
+                    groups.append({pol: {n: names[n]}})
+    return [g for g in groups if g]
+
+
+def build(P, wallet, picked, pays):
+    """Finish a tx spending `picked`: (reply or None, size)."""
+    used = [wallet[u] for u in picked]
+    refs = [u["ref"] for u in used]
+    n_wit = len({u["addr"] for u in used})
+    spare = sum(u["value"][0] for u in used) - sum(o[1][0] for o in pays)
+    left = {}
+    for u in used:
+        add_into(left, u["value"][1])
+    for o in pays:
+        add_into(left, o[1][1], -1)
+    left = {k: q for k, q in left.items() if q}
+    addr0 = P["addr0"]
+
+    def reply(vals, fee):
+        return {"inputs": list(picked),
+                "change": [{"addr": 0, "value": value_json(v)} for v in vals], "fee": fee}
+
+    def outs(vals):
+        return pays + [(addr0, v, None) for v in vals]
+
+    if left:
+        groups = split(P, nest(left))
+        mins = [min_lovelace(P, addr0, g) for g in groups]
+        fee = 0
+        while True:
+            c0 = spare - fee - sum(mins[1:])
+            if c0 < mins[0]:
+                return None, tx_size(refs, outs(list(zip(mins, groups))), 0, n_wit)
+            vals = [(c0, groups[0])] + list(zip(mins[1:], groups[1:]))
+            size = tx_size(refs, outs(vals), fee, n_wit)
+            f = min_fee(P, size)
+            if f <= fee:
+                return reply(vals, fee), size
+            fee = f
+
+    fee = 0
+    while spare - fee >= 0:
+        v = (spare - fee, {})
+        size = tx_size(refs, outs([v]), fee, n_wit)
+        f = min_fee(P, size)
+        if f <= fee:
+            if v[0] >= min_ada(P, addr0, v):
+                return reply([v], fee), size
+            break
+        fee = f
+    size = tx_size(refs, pays, max(spare, 0), n_wit)
+    if spare >= min_fee(P, size):
+        return reply([], spare), size
+    return None, size
+
+
+def select(P, wallet, pays):
+    need = {}
+    for o in pays:
+        add_into(need, o[1][1])
+    picked, have = [], {}
+
+    def take(uid):
+        picked.append(uid)
+        add_into(have, wallet[uid]["value"][1])
+
+    for key in sorted(need, key=lambda k: (canon(k[0]), canon(k[1]))):
+        pol, name = key
+
+        def held(u):
+            return wallet[u]["value"][1].get(pol, {}).get(name, 0)
+
+        holders = sorted((u for u in wallet if u not in picked and held(u) > 0),
+                         key=lambda u: (-held(u), u))
+        for uid in holders:
+            if have.get(key, 0) >= need[key]:
+                break
+            take(uid)
+        if have.get(key, 0) < need[key]:
+            return None
+
+    rest = sorted((u for u in wallet if u not in picked),
+                  key=lambda u: (-wallet[u]["value"][0], u))
+    if picked:
+        r, size = build(P, wallet, picked, pays)
+        if size > P["max_tx_size"]:
+            return None
+        if r is not None:
+            return r
+    for uid in rest:
+        take(uid)
+        r, size = build(P, wallet, picked, pays)
+        if size > P["max_tx_size"]:
+            return None
+        if r is not None:
+            return r
+    return None
+
+
+# ------------------------------------------------------------ protocol
+
+def main():
+    P = None
+    wallet = {}  # id -> {"ref", "addr", "value"}
+    for line in sys.stdin:
+        msg = json.loads(line)
+        t = msg.get("type")
+        if t is None:
+            P = msg
+            P["addr0"] = bytes.fromhex(P["addresses"][0])
+        elif t == "deposit":
+            for u in msg["utxos"]:
+                wallet[u["id"]] = {"ref": utxo_ref(u["id"], u["index"]), "addr": u["addr"],
+                                   "value": parse_value(u["value"])}
+        elif t == "pay":
+            pays = [(bytes.fromhex(o["address"]), parse_value(o["value"]),
+                     parse_datum(o.get("datum"))) for o in msg["outputs"]]
+            reply = select(P, wallet, pays)
+            if reply is None:
+                reply = {"refuse": True}
+            else:
+                for i in reply["inputs"]:
+                    del wallet[i]
+                for k, c in enumerate(reply["change"]):
+                    uid = "%s#%d" % (msg["id"], k)
+                    wallet[uid] = {"ref": utxo_ref(uid, len(pays) + k), "addr": c["addr"],
+                                   "value": parse_value(c["value"])}
+            sys.stdout.write(json.dumps(reply) + "\n")
+            sys.stdout.flush()
+        elif t == "end":
+            return
+
+
+main()

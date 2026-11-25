@@ -1,0 +1,6 @@
+id        = "ma-over-max-val"
+contract  = "wallet-multiasset@1"
+novelty   = "new"
+direction = "ma-over-max-val"
+taxonomy  = { strategy = "largest-first", change = "single", consolidation = "none", language = "python" }
+summary   = "Broken on purpose: largest-first that merges every token UTxO into one change, past max_val_size."

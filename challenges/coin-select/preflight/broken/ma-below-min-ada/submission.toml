@@ -1,0 +1,6 @@
+id        = "ma-below-min-ada"
+contract  = "wallet-multiasset@1"
+novelty   = "new"
+direction = "ma-below-min-ada"
+taxonomy  = { strategy = "largest-first", change = "single", consolidation = "none", language = "python" }
+summary   = "Broken on purpose: largest-first that funds token change at the ADA-only min-ada."

@@ -27,9 +27,11 @@ interface    = "contracts/wallet/INTERFACE.md"
 choice_space = "contracts/wallet/CHOICES.md"
 
 [[contracts]]
-id          = "wallet-multiasset@0"
-status      = "deferred"
-admits_when = "a multi-asset size and min-ada model, checked against cardano-ledger"
+id           = "wallet-multiasset@1"
+status       = "open"
+judge        = "contracts/wallet-multiasset/judge"
+interface    = "contracts/wallet-multiasset/INTERFACE.md"
+choice_space = "contracts/wallet-multiasset/CHOICES.md"
 
 [[properties]]
 id       = "valid-txs"
@@ -45,6 +47,16 @@ contract = "wallet@1"
 id       = "change-privacy"
 check    = "declared"
 contract = "wallet@1"
+
+[[properties]]
+id       = "ma-valid-txs"
+check    = "mechanical"
+contract = "wallet-multiasset@1"
+
+[[properties]]
+id       = "ma-serves-feasible"
+check    = "mechanical"
+contract = "wallet-multiasset@1"
 
 # Tolerances are first guesses; they get tuned from preflight's measured spread.
 
@@ -63,6 +75,30 @@ direction = "minimise"
 repeats   = 1
 tolerance = 0.3
 tolerance_abs = 2.0
+contracts = ["wallet@1"]
+
+# locked_ada and ada_dust: tolerance = 2 x (range / median) of baseline-multiasset
+# over seeds 1-5 (locked_ada 272.1-339.2 ADA, median 325.7; ada_dust 88.9-97.4, median 92.4).
+# Preflight's noise check measures only the wallet@1 baseline, so these two were hand-tuned
+# from baseline-multiasset, not by preflight.
+
+[[axes]]
+id        = "locked_ada"
+unit      = "ADA"
+direction = "minimise"
+repeats   = 1
+tolerance = 0.42
+tolerance_abs = 1.0
+contracts = ["wallet-multiasset@1"]
+
+[[axes]]
+id        = "ada_dust"
+unit      = "UTxOs"
+direction = "minimise"
+repeats   = 1
+tolerance = 0.18
+tolerance_abs = 2.0
+contracts = ["wallet-multiasset@1"]
 
 [[axes]]
 id        = "inputs_per_tx"
